@@ -64,26 +64,26 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     // Compose
-    implementation("androidx.compose.ui:ui:1.5.4")  // Explicit version
-    implementation("androidx.compose.ui:ui-graphics:1.5.4")
-    implementation("androidx.compose.ui:ui-tooling-preview:1.5.4")
-    implementation("androidx.compose.material3:material3:1.1.2")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    implementation("androidx.compose.ui:ui:1.9.4")  // Explicit version
+    implementation("androidx.compose.ui:ui-graphics:1.9.4")
+    implementation("androidx.compose.ui:ui-tooling-preview:1.9.4")
+    implementation("androidx.compose.material3:material3:1.4.0")
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
 
     // Tangem SDK
     implementation("com.github.tangem.tangem-sdk-android:android:3.9.2")
     implementation("com.github.tangem.tangem-sdk-android:core:3.9.2")
 
     // web3j
-    implementation("org.web3j:core:4.12.3") {
-        exclude(group = "tech.pegasys", module = "jc-kzg-4844")
-    }
-    implementation("org.web3j:crypto:4.12.3")
+    implementation("org.web3j:core:5.0.1")
+    implementation("org.web3j:crypto:5.0.1")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")

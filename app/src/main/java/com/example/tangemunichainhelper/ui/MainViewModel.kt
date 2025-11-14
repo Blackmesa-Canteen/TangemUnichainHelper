@@ -14,6 +14,9 @@ import kotlinx.coroutines.launch
 import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.Sign
 import org.web3j.crypto.TransactionEncoder
+import org.web3j.rlp.RlpEncoder
+import org.web3j.rlp.RlpList
+import org.web3j.rlp.RlpString
 import org.web3j.utils.Numeric
 import timber.log.Timber
 import java.math.BigDecimal
@@ -375,6 +378,7 @@ class MainViewModel : ViewModel() {
         Timber.d("Encoding signed transaction...")
         Timber.d("Signature length: ${signature.size}")
         Timber.d("Recovery ID: $recoveryId")
+        Timber.d("Chain ID: ${NetworkConstants.CHAIN_ID}")
 
         require(signature.size == 64) { "Expected 64-byte signature, got ${signature.size}" }
 
@@ -384,22 +388,37 @@ class MainViewModel : ViewModel() {
         Timber.d("r: ${Numeric.toHexString(r)}")
         Timber.d("s: ${Numeric.toHexString(s)}")
 
-        // Calculate v for Unichain using EIP-155
-        // v = CHAIN_ID * 2 + 35 + recoveryId
-        val v = (NetworkConstants.CHAIN_ID * 2 + 35 + recoveryId).toByte()
+        // Calculate v for EIP-155: v = CHAIN_ID * 2 + 35 + recoveryId
+        // DON'T cast to byte - use BigInteger for proper encoding
+        val vValue = NetworkConstants.CHAIN_ID * 2 + 35 + recoveryId
+        val vBigInt = BigInteger.valueOf(vValue)
 
-        Timber.d("Calculated v for chain ID ${NetworkConstants.CHAIN_ID}: $v")
+        Timber.d("Calculated v (EIP-155): $vValue (0x${vValue.toString(16)})")
 
-        // Create signature data
-        val signatureData = Sign.SignatureData(v, r, s)
+        // Convert signature components to BigInteger
+        val rBigInt = BigInteger(1, r)
+        val sBigInt = BigInteger(1, s)
 
-        // Encode the signed transaction
-        val signedTx = TransactionEncoder.encode(rawTransaction, signatureData)
+        // Create the signed transaction manually using RLP encoding
+        val signedValues = listOf(
+            RlpString.create(rawTransaction.nonce),
+            RlpString.create(rawTransaction.gasPrice),
+            RlpString.create(rawTransaction.gasLimit),
+            RlpString.create(Numeric.hexStringToByteArray(rawTransaction.to)),
+            RlpString.create(rawTransaction.value),
+            RlpString.create(rawTransaction.data),
+            RlpString.create(vBigInt),
+            RlpString.create(rBigInt),
+            RlpString.create(sBigInt)
+        )
 
-        Timber.d("Final signed transaction length: ${signedTx.size}")
-        Timber.d("Final signed transaction: ${Numeric.toHexString(signedTx)}")
+        val rlpList = RlpList(signedValues)
+        val encoded = RlpEncoder.encode(rlpList)
 
-        return signedTx
+        Timber.d("Final signed transaction length: ${encoded.size}")
+        Timber.d("Final signed transaction: ${Numeric.toHexString(encoded)}")
+
+        return encoded
     }
 
     private fun findCorrectRecoveryId(
@@ -412,51 +431,53 @@ class MainViewModel : ViewModel() {
         val r = signature.copyOfRange(0, 32)
         val s = signature.copyOfRange(32, 64)
 
-        // Get the transaction hash we signed (legacy format, no chain ID)
         val txHash = web3Manager.getTransactionHashForTangemSigning(rawTransaction)
 
         Timber.d("Trying to find recovery ID...")
         Timber.d("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
 
-        // Try both recovery IDs (0 and 1)
+        // Decompress the public key if needed
+        val expectedKeyUncompressed = when (expectedPublicKey.size) {
+            33 -> {
+                // Compressed key - decompress it
+                Timber.d("Decompressing public key...")
+                try {
+                    val decompressed = decompressPublicKey(expectedPublicKey)
+                    Timber.d("Decompressed key: ${Numeric.toHexString(decompressed)}")
+                    decompressed
+                } catch (e: Exception) {
+                    Timber.e("Failed to decompress key: ${e.message}")
+                    return 0
+                }
+            }
+            65 -> {
+                // Uncompressed with 0x04 prefix - remove prefix
+                expectedPublicKey.copyOfRange(1, 65)
+            }
+            64 -> {
+                // Already uncompressed without prefix
+                expectedPublicKey
+            }
+            else -> {
+                Timber.e("Unexpected public key size: ${expectedPublicKey.size}")
+                return 0
+            }
+        }
+
+        // Try both recovery IDs
         for (recoveryId in 0..1) {
             try {
-                // Use legacy v values (27 or 28) for recovery
                 val v = (27 + recoveryId).toByte()
                 val signatureData = Sign.SignatureData(v, r, s)
 
                 Timber.d("Trying recovery ID $recoveryId (v=$v)...")
 
-                // Recover the public key
                 val recoveredKey = Sign.signedMessageHashToKey(txHash, signatureData)
                 val recoveredPublicKey = Numeric.toBytesPadded(recoveredKey, 64)
 
-                Timber.d("Recovered public key: ${Numeric.toHexString(recoveredPublicKey)}")
+                Timber.d("Recovered key: ${Numeric.toHexString(recoveredPublicKey)}")
 
-                // Handle different public key formats
-                val expectedKeyToCompare = when {
-                    // Uncompressed key with 0x04 prefix (65 bytes)
-                    expectedPublicKey.size == 65 && expectedPublicKey[0] == 0x04.toByte() -> {
-                        expectedPublicKey.copyOfRange(1, 65)
-                    }
-                    // Compressed key (33 bytes) - need to decompress
-                    expectedPublicKey.size == 33 -> {
-                        // For compressed keys, we need to decompress them
-                        // This is complex, so let's try a different approach
-                        Timber.w("Compressed key format not fully supported")
-                        continue
-                    }
-                    // Already in correct format (64 bytes)
-                    expectedPublicKey.size == 64 -> {
-                        expectedPublicKey
-                    }
-                    else -> {
-                        Timber.w("Unexpected public key size: ${expectedPublicKey.size}")
-                        continue
-                    }
-                }
-
-                if (recoveredPublicKey.contentEquals(expectedKeyToCompare)) {
+                if (recoveredPublicKey.contentEquals(expectedKeyUncompressed)) {
                     Timber.d("✓ Found correct recovery ID: $recoveryId")
                     return recoveryId
                 } else {
@@ -468,9 +489,35 @@ class MainViewModel : ViewModel() {
             }
         }
 
-        // If we can't determine, default to 0
         Timber.w("Could not determine correct recovery ID, defaulting to 0")
         return 0
+    }
+
+    private fun decompressPublicKey(compressedKey: ByteArray): ByteArray {
+        require(compressedKey.size == 33) { "Compressed key must be 33 bytes" }
+
+        val prefix = compressedKey[0]
+        require(prefix == 0x02.toByte() || prefix == 0x03.toByte()) {
+            "Invalid compressed key prefix: $prefix"
+        }
+
+        try {
+            // Use Bouncy Castle to decompress
+            val spec = org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256k1")
+            val point = spec.curve.decodePoint(compressedKey)
+
+            // Get uncompressed encoding (without 0x04 prefix)
+            val uncompressed = point.getEncoded(false) // false = uncompressed format
+
+            Timber.d("Original compressed (${compressedKey.size} bytes): ${Numeric.toHexString(compressedKey)}")
+            Timber.d("Decompressed (${uncompressed.size} bytes): ${Numeric.toHexString(uncompressed)}")
+
+            // Remove the 0x04 prefix byte to get just the 64-byte key
+            return uncompressed.copyOfRange(1, uncompressed.size)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to decompress public key")
+            throw e
+        }
     }
 
     fun clearError() {

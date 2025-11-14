@@ -10,6 +10,7 @@ import com.tangem.common.core.TangemSdkError
 import com.tangem.crypto.hdWallet.DerivationPath
 import com.tangem.sdk.extensions.init
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.bouncycastle.jce.ECNamedCurveTable
 import org.web3j.crypto.Hash
 import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.Sign
@@ -33,7 +34,7 @@ class TangemManager(private val activity: ComponentActivity) {
     )
 
     /**
-     * Scan Tangem card to get card info
+     * Scan Tangem card to get card info with derived Ethereum address
      */
     suspend fun scanCard(accessCode: String? = null): Result<CardInfo> =
         suspendCancellableCoroutine { continuation ->
@@ -43,71 +44,56 @@ class TangemManager(private val activity: ComponentActivity) {
                     is CompletionResult.Success -> {
                         val card = result.data
                         Timber.d("Card scanned successfully. Card ID: ${card.cardId}")
-                        Timber.d("Is HD wallet: ${card.settings.isHDWalletAllowed}")
-                        Timber.d("Number of wallets: ${card.wallets.size}")
 
-                        card.wallets.forEachIndexed { index, wallet ->
-                            Timber.d("=== Wallet $index ===")
-                            Timber.d("  Public key: ${Numeric.toHexString(wallet.publicKey)}")
-                            Timber.d("  Curve: ${wallet.curve}")
-                            Timber.d("  Has backup: ${wallet.hasBackup}")
-                            Timber.d("  Settings: ${wallet.settings}")
-                            Timber.d("  Index: ${wallet.index}")
-
-                            val ethPath = DerivationPath(rawPath = "m/44'/60'/0'/0/0")
-                            val derivedKey = wallet.derivedKeys[ethPath]
-
-                            if (derivedKey != null) {
-                                // this is the address!
-                                val ethAddress = calculateEthereumAddress(derivedKey.publicKey)
-                                Timber.d("Test Derived Ethereum address: $ethAddress")
-                                // This should match 0x5A4dC932a92Eb68529522eA79b566C01515F6436
-                            }
-
-                            // Check if this wallet has derivation info
-                            try {
-                                val walletClass = wallet::class.java
-                                walletClass.declaredFields.forEach { field ->
-                                    field.isAccessible = true
-                                    val value = field.get(wallet)
-                                    if (field.name.contains("deriv", ignoreCase = true) ||
-                                        field.name.contains("path", ignoreCase = true) ||
-                                        field.name.contains("hd", ignoreCase = true)) {
-                                        Timber.d("  ${field.name}: $value")
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Timber.e("Could not inspect wallet fields: ${e.message}")
-                            }
-
-                            // Try to calculate address
-                            val calculatedAddress = try {
-                                calculateEthereumAddress(wallet.publicKey)
-                            } catch (e: Exception) {
-                                null
-                            }
-                            Timber.d("  Calculated address: $calculatedAddress")
-                            Timber.d("  Target address: ${NetworkConstants.WALLET_ADDRESS}")
-                        }
-
-                        // For now, use the first wallet
-                        val wallet = card.wallets.firstOrNull()
+                        // Find Secp256k1 wallet (Ethereum)
+                        val wallet = card.wallets.find { it.curve == EllipticCurve.Secp256k1 }
 
                         if (wallet == null) {
-                            continuation.resume(Result.failure(Exception("No wallet found on card")))
+                            continuation.resume(Result.failure(Exception("No Ethereum wallet found on card")))
                             return@scanCard
                         }
 
+                        // Get derived Ethereum key at BIP-44 path
+                        val ethPath = DerivationPath(rawPath = "m/44'/60'/0'/0/0")
+                        val derivedKey = wallet.derivedKeys[ethPath]
+
+                        if (derivedKey == null) {
+                            continuation.resume(Result.failure(Exception("Ethereum key not derived. Please ensure SDK is configured with defaultDerivationPaths.")))
+                            return@scanCard
+                        }
+
+                        // Calculate Ethereum address from derived key
+                        val ethAddress = try {
+                            calculateEthereumAddress(derivedKey.publicKey)
+                        } catch (e: Exception) {
+                            continuation.resume(Result.failure(Exception("Failed to calculate address: ${e.message}")))
+                            return@scanCard
+                        }
+
+                        Timber.d("✓ Ethereum wallet found")
+                        Timber.d("  Address: $ethAddress")
+                        Timber.d("  Derived public key: ${Numeric.toHexString(derivedKey.publicKey)}")
+
                         val cardInfo = CardInfo(
                             cardId = card.cardId,
-                            publicKey = Numeric.toHexString(wallet.publicKey),
-                            walletAddress = NetworkConstants.WALLET_ADDRESS  // Use the known correct address for now
+                            publicKey = Numeric.toHexString(derivedKey.publicKey),
+                            walletAddress = ethAddress
                         )
 
                         continuation.resume(Result.success(cardInfo))
                     }
                     is CompletionResult.Failure -> {
-                        // ... existing error handling ...
+                        val error = result.error
+                        Timber.e("Card scan failed: ${error.customMessage}")
+
+                        val exception = when (error) {
+                            is TangemSdkError.UserCancelled ->
+                                Exception("User cancelled card scan")
+                            else ->
+                                Exception("Card scan failed: ${error.customMessage}")
+                        }
+
+                        continuation.resume(Result.failure(exception))
                     }
                 }
             }
@@ -117,31 +103,21 @@ class TangemManager(private val activity: ComponentActivity) {
      * Calculate Ethereum address from public key
      */
     private fun calculateEthereumAddress(publicKey: ByteArray): String {
-        Timber.d("Calculating Ethereum address from public key (${publicKey.size} bytes)")
-
         val publicKeyWithoutPrefix = when {
             // Uncompressed key with 0x04 prefix (65 bytes)
             publicKey.size == 65 && publicKey[0] == 0x04.toByte() -> {
-                Timber.d("Uncompressed key detected, removing 0x04 prefix")
                 publicKey.copyOfRange(1, 65)
             }
             // Compressed key (33 bytes starting with 0x02 or 0x03)
             publicKey.size == 33 && (publicKey[0] == 0x02.toByte() || publicKey[0] == 0x03.toByte()) -> {
-                Timber.d("Compressed key detected, decompressing...")
-                val spec = org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256k1")
+                val spec = ECNamedCurveTable.getParameterSpec("secp256k1")
                 val point = spec.curve.decodePoint(publicKey)
-                val uncompressed = point.getEncoded(false) // false = uncompressed
-                Timber.d("Decompressed to ${uncompressed.size} bytes")
-                uncompressed.copyOfRange(1, uncompressed.size) // Remove 0x04 prefix
+                val uncompressed = point.getEncoded(false)
+                uncompressed.copyOfRange(1, uncompressed.size)
             }
             // Already uncompressed without prefix (64 bytes)
-            publicKey.size == 64 -> {
-                Timber.d("Already uncompressed 64-byte key")
-                publicKey
-            }
-            else -> {
-                throw IllegalArgumentException("Unexpected public key size: ${publicKey.size} bytes")
-            }
+            publicKey.size == 64 -> publicKey
+            else -> throw IllegalArgumentException("Unexpected public key size: ${publicKey.size} bytes")
         }
 
         require(publicKeyWithoutPrefix.size == 64) {
@@ -154,12 +130,7 @@ class TangemManager(private val activity: ComponentActivity) {
         // Ethereum address is the last 20 bytes of the hash
         val addressBytes = hash.copyOfRange(hash.size - 20, hash.size)
 
-        // Convert to checksummed address
-        val address = Numeric.toHexString(addressBytes)
-
-        Timber.d("Derived Ethereum address: $address")
-
-        return address
+        return Numeric.toHexString(addressBytes)
     }
 
     /**

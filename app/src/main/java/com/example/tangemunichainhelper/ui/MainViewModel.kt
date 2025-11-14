@@ -30,6 +30,9 @@ class MainViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    // Store the scanned card info
+    private var currentCardInfo: CardInfo? = null
+
     fun initTangemManager(tangemManager: TangemManager) {
         this.tangemManager = tangemManager
     }
@@ -43,6 +46,7 @@ class MainViewModel : ViewModel() {
 
                 result?.fold(
                     onSuccess = { cardInfo ->
+                        currentCardInfo = cardInfo
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -83,32 +87,31 @@ class MainViewModel : ViewModel() {
 
     fun loadBalances() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingBalances = true) }
+            val cardInfo = currentCardInfo
+            if (cardInfo == null) {
+                _uiState.update { it.copy(error = "Please scan card first") }
+                return@launch
+            }
 
-            try {
-                // Load ETH balance
-                val ethResult = web3Manager.getEthBalance(NetworkConstants.WALLET_ADDRESS)
-                val ethBalance = ethResult.getOrNull() ?: BigDecimal.ZERO
+            _uiState.update { it.copy(isLoading = true) }
 
-                // Load USDC balance
-                val usdcResult = web3Manager.getUsdcBalance(NetworkConstants.WALLET_ADDRESS)
-                val usdcBalance = usdcResult.getOrNull() ?: BigDecimal.ZERO
+            // Use the address from scanned card
+            val address = cardInfo.walletAddress
 
-                _uiState.update {
-                    it.copy(
-                        isLoadingBalances = false,
-                        ethBalance = ethBalance,
-                        usdcBalance = usdcBalance
-                    )
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load balances")
-                _uiState.update {
-                    it.copy(
-                        isLoadingBalances = false,
-                        error = "Failed to load balances: ${e.message}"
-                    )
-                }
+            val ethBalanceResult = web3Manager.getEthBalance(address)
+            val usdcBalanceResult = web3Manager.getUsdcBalance(address)
+
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    ethBalance = ethBalanceResult.getOrDefault(BigDecimal.ZERO),
+                    usdcBalance = usdcBalanceResult.getOrDefault(BigDecimal.ZERO),
+                    error = when {
+                        ethBalanceResult.isFailure -> "Failed to load ETH balance"
+                        usdcBalanceResult.isFailure -> "Failed to load USDC balance"
+                        else -> null
+                    }
+                )
             }
         }
     }
@@ -119,9 +122,18 @@ class MainViewModel : ViewModel() {
         isUsdc: Boolean
     ) {
         viewModelScope.launch {
+            val cardInfo = currentCardInfo
+            if (cardInfo == null) {
+                _uiState.update { it.copy(error = "Please scan card first") }
+                return@launch
+            }
+
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
+                // Use the address from scanned card
+                val fromAddress = cardInfo.walletAddress
+
                 // Validate inputs
                 if (recipientAddress.isBlank() || !recipientAddress.matches(Regex("^0x[a-fA-F0-9]{40}$"))) {
                     _uiState.update {
@@ -156,7 +168,7 @@ class MainViewModel : ViewModel() {
                 }
 
                 // Get nonce and gas price
-                val nonceResult = web3Manager.getNonce(NetworkConstants.WALLET_ADDRESS)
+                val nonceResult = web3Manager.getNonce(fromAddress)
                 val nonce = nonceResult.getOrElse {
                     _uiState.update {
                         it.copy(
@@ -182,14 +194,14 @@ class MainViewModel : ViewModel() {
                 val gasLimitResult = if (isUsdc) {
                     val amountInSmallestUnit = amountDecimal.multiply(BigDecimal.TEN.pow(6)).toBigInteger()
                     web3Manager.estimateGasForUsdcTransfer(
-                        NetworkConstants.WALLET_ADDRESS,
+                        fromAddress,
                         recipientAddress,
                         amountInSmallestUnit
                     )
                 } else {
                     val amountInWei = amountDecimal.multiply(BigDecimal.TEN.pow(18)).toBigInteger()
                     web3Manager.estimateGasForEthTransfer(
-                        NetworkConstants.WALLET_ADDRESS,
+                        fromAddress,
                         recipientAddress,
                         amountInWei
                     )

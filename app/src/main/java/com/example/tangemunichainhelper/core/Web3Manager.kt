@@ -8,6 +8,7 @@ import org.web3j.abi.TypeReference
 import org.web3j.abi.datatypes.Address
 import org.web3j.abi.datatypes.Function
 import org.web3j.abi.datatypes.generated.Uint256
+import org.web3j.crypto.Hash
 import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.TransactionEncoder
 import org.web3j.protocol.Web3j
@@ -287,19 +288,44 @@ class Web3Manager {
     }
 
     /**
-     * Send signed transaction
+     * Get transaction hash for signing with Tangem
+     * Uses LEGACY format (no chain ID) for maximum compatibility
      */
+    fun getTransactionHashForTangemSigning(rawTransaction: RawTransaction): ByteArray {
+        // Encode transaction WITHOUT chain ID (legacy format)
+        val encoded = TransactionEncoder.encode(rawTransaction)
+
+        // Hash it with Keccak256
+        val hash = Hash.sha3(encoded)
+
+        Timber.d("Legacy encoded tx length: ${encoded.size} bytes")
+        Timber.d("Keccak256 hash: ${Numeric.toHexString(hash)}")
+
+        return hash
+    }
+
     suspend fun sendSignedTransaction(signedTransaction: ByteArray): Result<String> = withContext(Dispatchers.IO) {
         try {
             val hexValue = Numeric.toHexString(signedTransaction)
+
+            Timber.d("=== SENDING TRANSACTION ===")
+            Timber.d("To network: ${NetworkConstants.RPC_URL}")
+            Timber.d("Expected chain ID: ${NetworkConstants.CHAIN_ID}")
+            Timber.d("Raw transaction hex: $hexValue")
+
             val response: EthSendTransaction = web3j.ethSendRawTransaction(hexValue).send()
 
             if (response.hasError()) {
+                Timber.e("Network rejected transaction!")
+                Timber.e("Error code: ${response.error.code}")
+                Timber.e("Error message: ${response.error.message}")
+                Timber.e("Error data: ${response.error.data}")
                 throw Exception("Transaction error: ${response.error.message}")
             }
 
             val txHash = response.transactionHash
-            Timber.d("Transaction sent successfully. Hash: $txHash")
+            Timber.d("✓ Transaction sent successfully!")
+            Timber.d("Transaction hash: $txHash")
             Result.success(txHash)
         } catch (e: Exception) {
             Timber.e(e, "Failed to send signed transaction")

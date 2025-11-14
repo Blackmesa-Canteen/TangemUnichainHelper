@@ -6,6 +6,7 @@ import com.tangem.common.CompletionResult
 import com.tangem.common.core.TangemSdkError
 import com.tangem.sdk.extensions.init
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.Sign
 import org.web3j.utils.Numeric
 import timber.log.Timber
@@ -20,11 +21,19 @@ class TangemManager(private val activity: ComponentActivity) {
      */
     suspend fun scanCard(accessCode: String? = null): Result<CardInfo> =
         suspendCancellableCoroutine { continuation ->
+            Timber.d("testtst")
             tangemSdk.scanCard { result ->
                 when (result) {
                     is CompletionResult.Success -> {
                         val card = result.data
                         Timber.d("Card scanned successfully. Card ID: ${card.cardId}")
+
+                        // LOG CARD CAPABILITIES
+                        Timber.d("Card ID: ${card.cardId}")
+                        Timber.d("Card firmware: ${card.firmwareVersion}")
+                        Timber.d("Card settings: ${card.settings}")
+                        Timber.d("Supported curves: ${card.supportedCurves}")
+                        Timber.d("testtst")
 
                         // Get the first wallet (you can modify this to select specific wallet)
                         val wallet = card.wallets.firstOrNull()
@@ -68,8 +77,11 @@ class TangemManager(private val activity: ComponentActivity) {
         walletPublicKey: ByteArray,
     ): Result<ByteArray> = suspendCancellableCoroutine { continuation ->
 
-        Timber.d("Signing transaction with card: $cardId")
+        Timber.d("=== SIGNING TRANSACTION ===")
+        Timber.d("Card ID: $cardId")
+        Timber.d("Transaction hash length: ${transactionHash.size}")
         Timber.d("Transaction hash: ${Numeric.toHexString(transactionHash)}")
+        Timber.d("Wallet public key: ${Numeric.toHexString(walletPublicKey)}")
 
         // Track if continuation was already resumed
         var isResumed = false
@@ -108,13 +120,37 @@ class TangemManager(private val activity: ComponentActivity) {
                     }
                     is CompletionResult.Failure -> {
                         val error = result.error
-                        Timber.e("Transaction signing failed: ${error.customMessage}")
+
+                        // DETAILED ERROR LOGGING
+                        Timber.e("=== SIGNING FAILED ===")
+                        Timber.e("Error class: ${error::class.java.name}")
+                        Timber.e("Error simpleName: ${error::class.simpleName}")
+                        Timber.e("Error message: ${error.customMessage}")
+                        Timber.e("Error code: ${error.code}")
+                        Timber.e("Error toString: $error")
+
+                        // Try to get more details
+                        try {
+                            val errorFields = error::class.java.declaredFields
+                            Timber.e("Error fields:")
+                            errorFields.forEach { field ->
+                                field.isAccessible = true
+                                try {
+                                    val value = field.get(error)
+                                    Timber.e("  ${field.name}: $value")
+                                } catch (e: Exception) {
+                                    Timber.e("  ${field.name}: <unable to read>")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.e("Could not inspect error fields: ${e.message}")
+                        }
 
                         val exception = when (error) {
                             is TangemSdkError.UserCancelled ->
                                 Exception("User cancelled transaction signing")
                             else ->
-                                Exception("Signing failed: ${error.customMessage}")
+                                Exception("Signing failed: ${error.code} - ${error.customMessage}")
                         }
 
                         continuation.resume(Result.failure(exception))
@@ -124,45 +160,6 @@ class TangemManager(private val activity: ComponentActivity) {
                 Timber.w("Attempted to resume continuation multiple times")
             }
         }
-    }
-
-    /**
-     * Sign and encode transaction for Ethereum
-     * This converts the Tangem signature to Ethereum format
-     */
-    fun encodeSignedTransaction(
-        transactionHash: ByteArray,
-        signature: ByteArray,
-        chainId: Long
-    ): ByteArray {
-        // Tangem returns signature in format: r (32 bytes) + s (32 bytes) + v (1 byte)
-        // We need to convert it to Ethereum format
-
-        if (signature.size < 65) {
-            throw IllegalArgumentException("Invalid signature length: ${signature.size}")
-        }
-
-        val r = signature.copyOfRange(0, 32)
-        val s = signature.copyOfRange(32, 64)
-        val v = signature[64]
-
-        Timber.d("Signature components - r: ${Numeric.toHexString(r)}, s: ${Numeric.toHexString(s)}, v: $v")
-
-        // For EIP-155, we need to encode v with chain ID
-        // v = CHAIN_ID * 2 + 35 + {0, 1}
-        val vWithChainId = (chainId * 2 + 35 + (v.toInt() and 1)).toByte()
-
-        // Create the signature data
-        val signatureData = Sign.SignatureData(
-            vWithChainId,
-            r,
-            s
-        )
-
-        Timber.d("Encoded v with chain ID: $vWithChainId")
-
-        // Combine signature components
-        return r + s + byteArrayOf(vWithChainId)
     }
 }
 

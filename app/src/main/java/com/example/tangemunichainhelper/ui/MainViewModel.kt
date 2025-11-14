@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.web3j.crypto.RawTransaction
+import org.web3j.crypto.Sign
 import org.web3j.crypto.TransactionEncoder
 import org.web3j.utils.Numeric
 import timber.log.Timber
@@ -278,10 +279,20 @@ class MainViewModel : ViewModel() {
                     return@launch
                 }
 
-                // Get transaction hash for signing
-                val transactionHash = web3Manager.getTransactionHash(rawTransaction)
+                // Step 2: Get hash for Tangem signing (uses Ethereum chain ID 1)
+                val transactionHash = web3Manager.getTransactionHashForTangemSigning(rawTransaction)
 
-                // Sign with Tangem card
+                Timber.d("=== ABOUT TO SIGN ===")
+                Timber.d("Raw transaction nonce: ${rawTransaction.nonce}")
+                Timber.d("Raw transaction gasPrice: ${rawTransaction.gasPrice}")
+                Timber.d("Raw transaction gasLimit: ${rawTransaction.gasLimit}")
+                Timber.d("Raw transaction to: ${rawTransaction.to}")
+                Timber.d("Raw transaction value: ${rawTransaction.value}")
+                Timber.d("Raw transaction data: ${rawTransaction.data}")
+                Timber.d("Transaction hash to sign: ${Numeric.toHexString(transactionHash)}")
+                Timber.d("Transaction hash length: ${transactionHash.size} bytes")
+
+                // Step 3: Sign with Tangem (card thinks it's signing Ethereum)
                 val signatureResult = tangemManager?.signTransactionHash(
                     cardId = cardInfo.cardId,
                     walletPublicKey = Numeric.hexStringToByteArray(cardInfo.publicKey),
@@ -306,13 +317,20 @@ class MainViewModel : ViewModel() {
                     return@launch
                 }
 
-                // Encode signed transaction
-                val signedTransaction = encodeSignedTransactionWithSignature(
+                // Step 4: Re-encode with Unichain chain ID (130)
+                val recoveryId = findCorrectRecoveryId(
                     rawTransaction = rawTransaction,
-                    signature = signature
+                    signature = signature,
+                    expectedPublicKey = Numeric.hexStringToByteArray(cardInfo.publicKey)
                 )
 
-                // Send transaction
+                val signedTransaction = encodeSignedTransactionWithSignature(
+                    rawTransaction = rawTransaction,
+                    signature = signature,
+                    recoveryId = recoveryId  // Pass the correct recovery ID
+                )
+
+                // Step 5: Send to Unichain network
                 val txHashResult = web3Manager.sendSignedTransaction(signedTransaction)
 
                 txHashResult.fold(
@@ -351,29 +369,108 @@ class MainViewModel : ViewModel() {
 
     private fun encodeSignedTransactionWithSignature(
         rawTransaction: RawTransaction,
-        signature: ByteArray
+        signature: ByteArray,
+        recoveryId: Int
     ): ByteArray {
-        // Extract signature components
-        if (signature.size < 65) {
-            throw IllegalArgumentException("Invalid signature length: ${signature.size}")
-        }
+        Timber.d("Encoding signed transaction...")
+        Timber.d("Signature length: ${signature.size}")
+        Timber.d("Recovery ID: $recoveryId")
+
+        require(signature.size == 64) { "Expected 64-byte signature, got ${signature.size}" }
 
         val r = signature.copyOfRange(0, 32)
         val s = signature.copyOfRange(32, 64)
-        val v = signature[64]
 
-        // For EIP-155, encode v with chain ID
-        val vWithChainId = (NetworkConstants.CHAIN_ID * 2 + 35 + (v.toInt() and 1)).toByte()
+        Timber.d("r: ${Numeric.toHexString(r)}")
+        Timber.d("s: ${Numeric.toHexString(s)}")
+
+        // Calculate v for Unichain using EIP-155
+        // v = CHAIN_ID * 2 + 35 + recoveryId
+        val v = (NetworkConstants.CHAIN_ID * 2 + 35 + recoveryId).toByte()
+
+        Timber.d("Calculated v for chain ID ${NetworkConstants.CHAIN_ID}: $v")
 
         // Create signature data
-        val signatureData = org.web3j.crypto.Sign.SignatureData(
-            vWithChainId,
-            r,
-            s
-        )
+        val signatureData = Sign.SignatureData(v, r, s)
 
-        // Encode the transaction with signature
-        return TransactionEncoder.encode(rawTransaction, signatureData)
+        // Encode the signed transaction
+        val signedTx = TransactionEncoder.encode(rawTransaction, signatureData)
+
+        Timber.d("Final signed transaction length: ${signedTx.size}")
+        Timber.d("Final signed transaction: ${Numeric.toHexString(signedTx)}")
+
+        return signedTx
+    }
+
+    private fun findCorrectRecoveryId(
+        rawTransaction: RawTransaction,
+        signature: ByteArray,
+        expectedPublicKey: ByteArray
+    ): Int {
+        require(signature.size == 64) { "Signature must be 64 bytes for recovery" }
+
+        val r = signature.copyOfRange(0, 32)
+        val s = signature.copyOfRange(32, 64)
+
+        // Get the transaction hash we signed (legacy format, no chain ID)
+        val txHash = web3Manager.getTransactionHashForTangemSigning(rawTransaction)
+
+        Timber.d("Trying to find recovery ID...")
+        Timber.d("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
+
+        // Try both recovery IDs (0 and 1)
+        for (recoveryId in 0..1) {
+            try {
+                // Use legacy v values (27 or 28) for recovery
+                val v = (27 + recoveryId).toByte()
+                val signatureData = Sign.SignatureData(v, r, s)
+
+                Timber.d("Trying recovery ID $recoveryId (v=$v)...")
+
+                // Recover the public key
+                val recoveredKey = Sign.signedMessageHashToKey(txHash, signatureData)
+                val recoveredPublicKey = Numeric.toBytesPadded(recoveredKey, 64)
+
+                Timber.d("Recovered public key: ${Numeric.toHexString(recoveredPublicKey)}")
+
+                // Handle different public key formats
+                val expectedKeyToCompare = when {
+                    // Uncompressed key with 0x04 prefix (65 bytes)
+                    expectedPublicKey.size == 65 && expectedPublicKey[0] == 0x04.toByte() -> {
+                        expectedPublicKey.copyOfRange(1, 65)
+                    }
+                    // Compressed key (33 bytes) - need to decompress
+                    expectedPublicKey.size == 33 -> {
+                        // For compressed keys, we need to decompress them
+                        // This is complex, so let's try a different approach
+                        Timber.w("Compressed key format not fully supported")
+                        continue
+                    }
+                    // Already in correct format (64 bytes)
+                    expectedPublicKey.size == 64 -> {
+                        expectedPublicKey
+                    }
+                    else -> {
+                        Timber.w("Unexpected public key size: ${expectedPublicKey.size}")
+                        continue
+                    }
+                }
+
+                if (recoveredPublicKey.contentEquals(expectedKeyToCompare)) {
+                    Timber.d("✓ Found correct recovery ID: $recoveryId")
+                    return recoveryId
+                } else {
+                    Timber.d("✗ Recovery ID $recoveryId doesn't match")
+                }
+            } catch (e: Exception) {
+                Timber.w("Recovery ID $recoveryId failed: ${e.message}")
+                continue
+            }
+        }
+
+        // If we can't determine, default to 0
+        Timber.w("Could not determine correct recovery ID, defaulting to 0")
+        return 0
     }
 
     fun clearError() {

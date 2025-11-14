@@ -17,14 +17,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.tangemunichainhelper.core.CardInfo
+import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
 import com.example.tangemunichainhelper.ui.MainViewModel
-import com.tangem.unichain.core.NetworkConstants
-import com.tangem.unichain.core.TangemManager
-import com.tangem.unichain.ui.MainViewModel
-import com.tangem.unichain.ui.theme.TangemUnichainTheme
+import com.example.tangemunichainhelper.ui.TransferParams
+import com.example.tangemunichainhelper.ui.theme.TangemUnichainTheme
 import timber.log.Timber
 import java.math.BigInteger
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.material3.ExperimentalMaterial3Api // Add for FilterChip
 
 class MainActivity : ComponentActivity() {
 
@@ -108,7 +111,8 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
 
                 // Transfer Section
-                if (uiState.transferParams == null) {
+                val transferParams = uiState.transferParams
+                if (transferParams == null) {
                     TransferSection(
                         isLoading = uiState.isLoading,
                         onPrepareTransfer = { address, amount, isUsdc ->
@@ -116,9 +120,9 @@ fun MainScreen(viewModel: MainViewModel) {
                         }
                     )
                 } else {
-                    // Confirmation Section
+                    // Now transferParams is smart-cast to non-null
                     TransferConfirmationSection(
-                        transferParams = uiState.transferParams,
+                        transferParams = transferParams,
                         isLoading = uiState.isLoading,
                         onConfirm = { viewModel.executeTransfer() },
                         onCancel = { viewModel.cancelTransfer() },
@@ -231,7 +235,7 @@ fun TransactionSuccessCard(txHash: String, onDismiss: () -> Unit) {
 
 @Composable
 fun CardScanSection(
-    cardInfo: com.tangem.unichain.core.CardInfo?,
+    cardInfo: CardInfo?,
     isLoading: Boolean,
     onScanCard: () -> Unit
 ) {
@@ -341,6 +345,7 @@ fun BalanceRow(symbol: String, balance: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransferSection(
     isLoading: Boolean,
@@ -416,7 +421,7 @@ fun TransferSection(
 
 @Composable
 fun TransferConfirmationSection(
-    transferParams: com.tangem.unichain.ui.TransferParams,
+    transferParams: TransferParams,
     isLoading: Boolean,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,

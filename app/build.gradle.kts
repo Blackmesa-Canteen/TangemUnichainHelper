@@ -73,8 +73,9 @@ dependencies {
 
     // Tangem SDK
     implementation("com.github.tangem.tangem-sdk-android:android:3.9.2")
+    implementation("com.github.tangem.tangem-sdk-android:core:3.9.2")
 
-    // Web3j for Ethereum interactions
+    // web3j
     implementation("org.web3j:core:4.12.3") {
         exclude(group = "tech.pegasys", module = "jc-kzg-4844")
     }

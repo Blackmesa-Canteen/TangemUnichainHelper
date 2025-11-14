@@ -6,10 +6,6 @@ import com.example.tangemunichainhelper.core.CardInfo
 import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
 import com.example.tangemunichainhelper.core.Web3Manager
-import com.tangem.unichain.core.CardInfo
-import com.tangem.unichain.core.NetworkConstants
-import com.tangem.unichain.core.TangemManager
-import com.tangem.unichain.core.Web3Manager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.TransactionEncoder
+import org.web3j.utils.Numeric
 import timber.log.Timber
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -287,6 +284,7 @@ class MainViewModel : ViewModel() {
                 // Sign with Tangem card
                 val signatureResult = tangemManager?.signTransactionHash(
                     cardId = cardInfo.cardId,
+                    walletPublicKey = Numeric.hexStringToByteArray(cardInfo.publicKey),
                     transactionHash = transactionHash
                 )
 

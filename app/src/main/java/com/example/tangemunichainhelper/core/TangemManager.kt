@@ -1,14 +1,17 @@
 package com.example.tangemunichainhelper.core
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import com.tangem.TangemSdk
+import com.tangem.common.CompletionResult
+import com.tangem.common.core.TangemSdkError
+import com.tangem.sdk.extensions.init
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.web3j.crypto.Sign
 import org.web3j.utils.Numeric
 import timber.log.Timber
 import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
-class TangemManager(private val activity: Activity) {
+class TangemManager(private val activity: ComponentActivity) {
 
     private val tangemSdk: TangemSdk = TangemSdk.init(activity)
 
@@ -44,7 +47,7 @@ class TangemManager(private val activity: Activity) {
                         Timber.e("Card scan failed: ${error.customMessage}")
 
                         val exception = when (error) {
-                            is TangemSdkError.UserCancelledError ->
+                            is TangemSdkError.UserCancelled ->
                                 Exception("User cancelled card scan")
                             else ->
                                 Exception("Card scan failed: ${error.customMessage}")
@@ -61,7 +64,8 @@ class TangemManager(private val activity: Activity) {
      */
     suspend fun signTransactionHash(
         cardId: String,
-        transactionHash: ByteArray
+        transactionHash: ByteArray,
+        walletPublicKey: ByteArray,
     ): Result<ByteArray> = suspendCancellableCoroutine { continuation ->
 
         Timber.d("Signing transaction with card: $cardId")
@@ -70,7 +74,8 @@ class TangemManager(private val activity: Activity) {
         // Tangem SDK sign method
         tangemSdk.sign(
             hashes = arrayOf(transactionHash),
-            cardId = cardId
+            cardId = cardId,
+            walletPublicKey = walletPublicKey,
         ) { result ->
             when (result) {
                 is CompletionResult.Success -> {
@@ -94,7 +99,7 @@ class TangemManager(private val activity: Activity) {
                     Timber.e("Transaction signing failed: ${error.customMessage}")
 
                     val exception = when (error) {
-                        is TangemSdkError.UserCancelledError ->
+                        is TangemSdkError.UserCancelled ->
                             Exception("User cancelled transaction signing")
                         else ->
                             Exception("Signing failed: ${error.customMessage}")

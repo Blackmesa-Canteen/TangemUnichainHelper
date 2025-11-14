@@ -71,42 +71,57 @@ class TangemManager(private val activity: ComponentActivity) {
         Timber.d("Signing transaction with card: $cardId")
         Timber.d("Transaction hash: ${Numeric.toHexString(transactionHash)}")
 
+        // Track if continuation was already resumed
+        var isResumed = false
+
+        // Handle cancellation
+        continuation.invokeOnCancellation {
+            Timber.d("Transaction signing was cancelled")
+        }
+
         // Tangem SDK sign method
         tangemSdk.sign(
             hashes = arrayOf(transactionHash),
             cardId = cardId,
             walletPublicKey = walletPublicKey,
         ) { result ->
-            when (result) {
-                is CompletionResult.Success -> {
-                    val signResponse = result.data
+            // Only resume if not already resumed
+            if (!isResumed) {
+                isResumed = true
 
-                    if (signResponse.signatures.isEmpty()) {
-                        continuation.resume(
-                            Result.failure(Exception("No signature received from card"))
-                        )
-                        return@sign
+                when (result) {
+                    is CompletionResult.Success -> {
+                        val signResponse = result.data
+
+                        if (signResponse.signatures.isEmpty()) {
+                            continuation.resume(
+                                Result.failure(Exception("No signature received from card"))
+                            )
+                            return@sign
+                        }
+
+                        val signature = signResponse.signatures[0]
+                        Timber.d("Transaction signed successfully")
+                        Timber.d("Signature: ${Numeric.toHexString(signature)}")
+
+                        continuation.resume(Result.success(signature))
                     }
+                    is CompletionResult.Failure -> {
+                        val error = result.error
+                        Timber.e("Transaction signing failed: ${error.customMessage}")
 
-                    val signature = signResponse.signatures[0]
-                    Timber.d("Transaction signed successfully")
-                    Timber.d("Signature: ${Numeric.toHexString(signature)}")
+                        val exception = when (error) {
+                            is TangemSdkError.UserCancelled ->
+                                Exception("User cancelled transaction signing")
+                            else ->
+                                Exception("Signing failed: ${error.customMessage}")
+                        }
 
-                    continuation.resume(Result.success(signature))
-                }
-                is CompletionResult.Failure -> {
-                    val error = result.error
-                    Timber.e("Transaction signing failed: ${error.customMessage}")
-
-                    val exception = when (error) {
-                        is TangemSdkError.UserCancelled ->
-                            Exception("User cancelled transaction signing")
-                        else ->
-                            Exception("Signing failed: ${error.customMessage}")
+                        continuation.resume(Result.failure(exception))
                     }
-
-                    continuation.resume(Result.failure(exception))
                 }
+            } else {
+                Timber.w("Attempted to resume continuation multiple times")
             }
         }
     }

@@ -6,7 +6,7 @@ object NetworkConstants {
     // Unichain Mainnet Configuration
     const val CHAIN_ID = 130L
     const val NETWORK_NAME = "Unichain Mainnet"
-    const val RPC_URL = "https://rpc.unichain.org"
+    const val RPC_URL = "https://mainnet.unichain.org"
     const val EXPLORER_URL = "https://uniscan.xyz"
     const val CURRENCY_SYMBOL = "ETH"
 

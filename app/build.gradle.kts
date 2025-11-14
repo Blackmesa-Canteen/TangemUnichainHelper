@@ -43,8 +43,20 @@ android {
     }
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "META-INF/versions/9/previous-compilation-data.bin"
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+                "META-INF/FastDoubleParser-LICENSE",
+                "META-INF/FastDoubleParser-NOTICE",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/*.kotlin_module"
+            )
         }
     }
 }
@@ -64,7 +76,7 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     // Compose
-    implementation("androidx.compose.ui:ui:1.9.4")  // Explicit version
+    implementation("androidx.compose.ui:ui:1.9.4")
     implementation("androidx.compose.ui:ui-graphics:1.9.4")
     implementation("androidx.compose.ui:ui-tooling-preview:1.9.4")
     implementation("androidx.compose.material3:material3:1.4.0")
@@ -82,8 +94,10 @@ dependencies {
     implementation("org.web3j:crypto:5.0.1")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    // Force use older coroutines version compatible with Tangem SDK
+    // Tangem SDK is trying to use a deprecated Kotlin Coroutines API (BroadcastChannel.asFlow()) that was removed in newer versions of kotlinx-coroutines.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
 
     // Logging
     implementation("com.jakewharton.timber:timber:5.0.1")

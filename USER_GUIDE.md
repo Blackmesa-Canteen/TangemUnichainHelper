@@ -1,10 +1,13 @@
 # Quick Start Guide - Recovering Your Stuck Funds
 
+## Note
+AI generated content!
+
 This guide is specifically for your situation: recovering USDC and ETH from Unichain where Tangem app cannot sign transactions.
 
-## Your Situation
+## Usage case
 
-- **Wallet Address**: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
+- **Wallet Address**: The wallet address that tangem card has.
 - **Network**: Unichain Mainnet (Chain ID 130)
 - **Problem**: Official Tangem app cannot sign transactions on Unichain
 - **Solution**: This custom app that uses Tangem SDK directly

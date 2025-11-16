@@ -1,6 +1,8 @@
-# Tangem Unichain Wallet App
+# Tangem Wallet Unofficial Unichain Support App
 
-A simple Android app for managing ETH and USDC on Unichain Mainnet using Tangem NFC cards.
+I got my USDC and ETH asset stuck on Unichain with Tangem wallet, and official Tangem wallet app cannot sign the Unichian transaction.
+
+So I built a simple Android app for managing ETH and USDC on Unichain Mainnet using Tangem NFC cards.
 
 ## ⚠️ IMPORTANT - READ BEFORE USING
 **Not stable yet**
@@ -41,12 +43,6 @@ The app is pre-configured with:
 - **RPC**: https://rpc.unichain.org
 - **Explorer**: https://uniscan.xyz
 - **USDC Contract**: 0x078D782b760474a361dDA0AF3839290b0EF57AD6
-- **Your Wallet**: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
-
-To change the wallet address, edit `NetworkConstants.kt`:
-```kotlin
-const val WALLET_ADDRESS = "YOUR_ADDRESS_HERE"
-```
 
 ## Building the App
 
@@ -353,4 +349,4 @@ This is example code for educational purposes. Use at your own risk.
 
 ---
 
-**Built with ❤️ for Tangem Card + Unichain**
+# Please feel free to code review before using this app, or fork as your own version!

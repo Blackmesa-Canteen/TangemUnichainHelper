@@ -1,12 +1,24 @@
 # Tangem Wallet Unofficial Unichain Support App
 
-I got my USDC and ETH asset stuck on Unichain with Tangem wallet, and official Tangem wallet app cannot sign the Unichian transaction.
+A simple Android app for managing ETH and USDC on Unichain Mainnet using Tangem NFC cards.
 
-So I built a simple Android app for managing ETH and USDC on Unichain Mainnet using Tangem NFC cards.
+## Background
+
+I have USDC and ETH assets on Unichain that became inaccessible because the official Tangem wallet app doesn't support signing Unichain transactions. This app was created to solve that problem.
 
 ## ⚠️ IMPORTANT - READ BEFORE USING
-**Not stable yet**
-There is a bug in Gas Fee, still working to fix it.
+
+### Known Issues
+- **Gas fee calculation bug**: The gas fee estimation is currently broken and under active development.
+
+### Security Notice
+**Please review the code before using this app.**
+
+This is my first Web3 project and may contain bugs or security issues. I strongly recommend:
+- Reviewing the source code thoroughly
+- Understanding the transaction workflow
+- Verifying it suits your specific use case
+- Testing with small amounts first
 
 **This app handles real cryptocurrency funds. Please read carefully:**
 
@@ -15,6 +27,8 @@ There is a bug in Gas Fee, still working to fix it.
 3. **Secure your Tangem card** - Keep your 4-digit access code safe
 4. **Verify transaction details** - Always review gas fees and amounts before signing
 5. **Check network** - This app is configured for Unichain Mainnet (Chain ID: 130)
+
+**Do not use this app without understanding what it does.**
 
 ## Features
 

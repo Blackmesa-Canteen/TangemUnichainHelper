@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.web3j.crypto.Hash
 import org.web3j.crypto.RawTransaction
 import org.web3j.crypto.Sign
 import org.web3j.crypto.TransactionEncoder
@@ -264,6 +265,14 @@ class MainViewModel : ViewModel() {
 
             _uiState.update { it.copy(isLoading = true, error = null) }
 
+            Timber.d("=== TRANSACTION DETAILS ===")
+            Timber.d("From address (cardInfo): ${cardInfo.walletAddress}")
+            Timber.d("Master public key: ${cardInfo.masterPublicKey}")
+            Timber.d("Derived public key: ${cardInfo.derivedPublicKey}")
+
+            val balanceCheck = web3Manager.getEthBalance(cardInfo.walletAddress)
+            Timber.d("Balance at ${cardInfo.walletAddress}: ${balanceCheck.getOrNull()} ETH")
+
             try {
                 // Create transaction
                 val rawTransactionResult = if (transferParams.isUsdc) {
@@ -310,8 +319,9 @@ class MainViewModel : ViewModel() {
                 // Step 3: Sign with Tangem (card thinks it's signing Ethereum)
                 val signatureResult = tangemManager?.signTransactionHash(
                     cardId = cardInfo.cardId,
-                    walletPublicKey = Numeric.hexStringToByteArray(cardInfo.publicKey),
-                    transactionHash = transactionHash
+                    walletPublicKey = Numeric.hexStringToByteArray(cardInfo.masterPublicKey),
+                    transactionHash = transactionHash,
+                    derivationPath = cardInfo.derivationPath  // With derivation path
                 )
 
                 val signature = signatureResult?.getOrElse { error ->
@@ -336,20 +346,24 @@ class MainViewModel : ViewModel() {
                 val recoveryId = findCorrectRecoveryId(
                     rawTransaction = rawTransaction,
                     signature = signature,
-                    expectedPublicKey = Numeric.hexStringToByteArray(cardInfo.publicKey)
+                    expectedPublicKey = Numeric.hexStringToByteArray(cardInfo.derivedPublicKey)
                 )
 
+                // Step 5: Re-encode with Unichain chain ID (130)
                 val signedTransaction = encodeSignedTransactionWithSignature(
                     rawTransaction = rawTransaction,
                     signature = signature,
                     recoveryId = recoveryId  // Pass the correct recovery ID
                 )
 
-                // Step 5: Send to Unichain network
+                // Step 6: Send to Unichain network
                 val txHashResult = web3Manager.sendSignedTransaction(signedTransaction)
 
                 txHashResult.fold(
                     onSuccess = { txHash ->
+                        Timber.d("✓ Transaction successful!")
+                        Timber.d("Transaction hash: $txHash")
+                        Timber.d("View on Uniscan: ${NetworkConstants.EXPLORER_URL}/tx/$txHash")
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -445,7 +459,7 @@ class MainViewModel : ViewModel() {
 
         val txHash = web3Manager.getTransactionHashForTangemSigning(rawTransaction)
 
-        Timber.d("Trying to find recovery ID...")
+        Timber.d("=== FINDING RECOVERY ID ===")
         Timber.d("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
 
         // Decompress the public key if needed
@@ -476,6 +490,17 @@ class MainViewModel : ViewModel() {
             }
         }
 
+        // Calculate and log expected address
+        val expectedAddress = try {
+            val hash = Hash.sha3(expectedKeyUncompressed)
+            val addressBytes = hash.copyOfRange(hash.size - 20, hash.size)
+            Numeric.toHexString(addressBytes)
+        } catch (e: Exception) {
+            Timber.e("Failed to calculate expected address: ${e.message}")
+            null
+        }
+        Timber.d("Expected address from public key: $expectedAddress")
+
         // Try both recovery IDs
         for (recoveryId in 0..1) {
             try {
@@ -487,13 +512,26 @@ class MainViewModel : ViewModel() {
                 val recoveredKey = Sign.signedMessageHashToKey(txHash, signatureData)
                 val recoveredPublicKey = Numeric.toBytesPadded(recoveredKey, 64)
 
-                Timber.d("Recovered key: ${Numeric.toHexString(recoveredPublicKey)}")
+                // Calculate recovered address
+                val recoveredAddress = try {
+                    val hash = Hash.sha3(recoveredPublicKey)
+                    val addressBytes = hash.copyOfRange(hash.size - 20, hash.size)
+                    Numeric.toHexString(addressBytes)
+                } catch (e: Exception) {
+                    null
+                }
+
+                Timber.d("Recovered public key: ${Numeric.toHexString(recoveredPublicKey)}")
+                Timber.d("Recovered address: $recoveredAddress")
 
                 if (recoveredPublicKey.contentEquals(expectedKeyUncompressed)) {
                     Timber.d("✓ Found correct recovery ID: $recoveryId")
+                    Timber.d("✓ Address match confirmed: $recoveredAddress")
                     return recoveryId
                 } else {
                     Timber.d("✗ Recovery ID $recoveryId doesn't match")
+                    Timber.d("  Expected address: $expectedAddress")
+                    Timber.d("  Recovered address: $recoveredAddress")
                 }
             } catch (e: Exception) {
                 Timber.w("Recovery ID $recoveryId failed: ${e.message}")
@@ -502,6 +540,7 @@ class MainViewModel : ViewModel() {
         }
 
         Timber.w("Could not determine correct recovery ID, defaulting to 0")
+        Timber.w("⚠️ WARNING: Using default recovery ID may result in wrong address!")
         return 0
     }
 

@@ -54,7 +54,8 @@ class TangemManager(private val activity: ComponentActivity) {
                         }
 
                         // Get derived Ethereum key at BIP-44 path
-                        val ethPath = DerivationPath(rawPath = "m/44'/60'/0'/0/0")
+                        val ethPathString = "m/44'/60'/0'/0/0"
+                        val ethPath = DerivationPath(rawPath = ethPathString)
                         val derivedKey = wallet.derivedKeys[ethPath]
 
                         if (derivedKey == null) {
@@ -72,12 +73,16 @@ class TangemManager(private val activity: ComponentActivity) {
 
                         Timber.d("✓ Ethereum wallet found")
                         Timber.d("  Address: $ethAddress")
+                        Timber.d("  Master public key: ${Numeric.toHexString(wallet.publicKey)}")
                         Timber.d("  Derived public key: ${Numeric.toHexString(derivedKey.publicKey)}")
+                        Timber.d("  Derivation path: $ethPathString")
 
                         val cardInfo = CardInfo(
                             cardId = card.cardId,
-                            publicKey = Numeric.toHexString(derivedKey.publicKey),
-                            walletAddress = ethAddress
+                            masterPublicKey = Numeric.toHexString(wallet.publicKey),     // Master key!
+                            derivedPublicKey = Numeric.toHexString(derivedKey.publicKey), // Derived key
+                            walletAddress = ethAddress,
+                            derivationPath = ethPathString
                         )
 
                         continuation.resume(Result.success(cardInfo))
@@ -140,6 +145,7 @@ class TangemManager(private val activity: ComponentActivity) {
         cardId: String,
         transactionHash: ByteArray,
         walletPublicKey: ByteArray,
+        derivationPath: String? = null
     ): Result<ByteArray> = suspendCancellableCoroutine { continuation ->
 
         Timber.d("=== SIGNING TRANSACTION ===")
@@ -156,11 +162,19 @@ class TangemManager(private val activity: ComponentActivity) {
             Timber.d("Transaction signing was cancelled")
         }
 
+        // Convert derivation path string to DerivationPath object if provided
+        val derivationPathObj = if (derivationPath != null) {
+            DerivationPath(rawPath = derivationPath)
+        } else {
+            null
+        }
+
         // Tangem SDK sign method
         tangemSdk.sign(
             hashes = arrayOf(transactionHash),
             cardId = cardId,
             walletPublicKey = walletPublicKey,
+            derivationPath = derivationPathObj
         ) { result ->
             // Only resume if not already resumed
             if (!isResumed) {
@@ -230,6 +244,8 @@ class TangemManager(private val activity: ComponentActivity) {
 
 data class CardInfo(
     val cardId: String,
-    val publicKey: String,
-    val walletAddress: String
+    val masterPublicKey: String,
+    val derivedPublicKey: String,
+    val walletAddress: String,
+    val derivationPath: String? = null
 )

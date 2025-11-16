@@ -1,5 +1,9 @@
 # Tangem Unichain App - Project Summary
 
+## Note
+
+AI generated content!
+
 ## 🎯 Project Overview
 
 This is a complete, production-ready Android application that solves your specific problem: **moving USDC and ETH from Unichain when the official Tangem app cannot sign transactions**.
@@ -221,10 +225,6 @@ RawTransaction.createTransaction(
 - **RPC**: https://rpc.unichain.org
 - **Explorer**: https://uniscan.xyz
 - **USDC Contract**: 0x078D782b760474a361dDA0AF3839290b0EF57AD6
-
-### Your Wallet
-- **Address**: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
-- **Configured in**: `NetworkConstants.kt`
 
 ### Gas Fee Estimates
 - **ETH Transfer**: ~21,000 gas (~$0.0001)

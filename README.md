@@ -3,6 +3,8 @@
 A simple Android app for managing ETH and USDC on Unichain Mainnet using Tangem NFC cards.
 
 ## ⚠️ IMPORTANT - READ BEFORE USING
+**Not stable yet**
+There is a bug in Gas Fee, still working to fix it.
 
 **This app handles real cryptocurrency funds. Please read carefully:**
 

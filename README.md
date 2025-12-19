@@ -232,6 +232,13 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE) for de
 - [Unichain](https://unichain.org) — for the network
 - [Web3j](https://web3j.io) — for the Ethereum library
 
+## Support
+
+If this project helped you recover your funds, consider supporting development:
+
+- **ETH/EVM**: `openjdk.eth`
+- **Star this repo** to help others find it
+
 ---
 
 **If this project helped you recover your funds, consider starring the repo!**

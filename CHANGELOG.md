@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
+## [1.0.1] - 2024-12-19
+
+### Fixed
+- Fixed "Failed to convert CurveId to EllipticCurve" error when scanning newer Tangem cards
+- Fixed 502 RPC errors when sending transactions
+
+### Changed
+- Upgraded Tangem SDK from 3.8.2 to 3.9.2 for newer card firmware support
+- Upgraded Java compatibility from 17 to 21 (required by web3j 5.0.1)
+- Switched primary RPC endpoint to dRPC for better reliability
+- Added RPC fallback with automatic retry logic
+- Increased Gradle JVM memory to 4GB for stable builds
+
+### Technical
+- Primary RPC: `https://unichain.drpc.org` (recommended by Unichain docs)
+- Fallback RPC: `https://mainnet.unichain.org`
+- CI/CD workflows updated with proper memory settings
+
 ## [1.0.0] - 2024-12-19
 
 ### Added

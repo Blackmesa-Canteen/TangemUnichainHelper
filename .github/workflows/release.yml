@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'
 
+env:
+  GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+
 jobs:
   release:
     name: Build & Release
@@ -27,6 +30,9 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Clear Gradle transform cache
+        run: rm -rf ~/.gradle/caches/*/transforms
 
       - name: Extract version from tag
         id: version

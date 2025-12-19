@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+
 jobs:
   build:
     name: Build & Test
@@ -24,6 +27,9 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Clear Gradle transform cache
+        run: rm -rf ~/.gradle/caches/*/transforms
 
       - name: Run unit tests
         run: ./gradlew test --stacktrace
@@ -66,6 +72,8 @@ jobs:
 
       - name: Run lint
         run: ./gradlew lint --stacktrace
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
         continue-on-error: true
 
       - name: Upload lint results

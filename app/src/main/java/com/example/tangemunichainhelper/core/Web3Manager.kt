@@ -318,32 +318,43 @@ class Web3Manager {
     }
 
     suspend fun sendSignedTransaction(signedTransaction: ByteArray): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            val hexValue = Numeric.toHexString(signedTransaction)
+        val hexValue = Numeric.toHexString(signedTransaction)
+        var lastException: Exception? = null
 
-            Timber.d("=== SENDING TRANSACTION ===")
-            Timber.d("To network: ${NetworkConstants.RPC_URL}")
-            Timber.d("Expected chain ID: ${NetworkConstants.CHAIN_ID}")
-            Timber.d("Raw transaction hex: $hexValue")
+        // Try each RPC endpoint
+        for (rpcUrl in NetworkConstants.RPC_URLS) {
+            try {
+                Timber.d("=== SENDING TRANSACTION ===")
+                Timber.d("To network: $rpcUrl")
+                Timber.d("Expected chain ID: ${NetworkConstants.CHAIN_ID}")
+                Timber.d("Raw transaction hex: $hexValue")
 
-            val response: EthSendTransaction = web3j.ethSendRawTransaction(hexValue).send()
+                val web3jInstance = Web3j.build(HttpService(rpcUrl))
+                val response: EthSendTransaction = web3jInstance.ethSendRawTransaction(hexValue).send()
 
-            if (response.hasError()) {
-                Timber.e("Network rejected transaction!")
-                Timber.e("Error code: ${response.error.code}")
-                Timber.e("Error message: ${response.error.message}")
-                Timber.e("Error data: ${response.error.data}")
-                throw Exception("Transaction error: ${response.error.message}")
+                if (response.hasError()) {
+                    Timber.e("Network rejected transaction on $rpcUrl!")
+                    Timber.e("Error code: ${response.error.code}")
+                    Timber.e("Error message: ${response.error.message}")
+                    Timber.e("Error data: ${response.error.data}")
+                    lastException = Exception("Transaction error: ${response.error.message}")
+                    continue // Try next RPC
+                }
+
+                val txHash = response.transactionHash
+                Timber.d("✓ Transaction sent successfully via $rpcUrl!")
+                Timber.d("Transaction hash: $txHash")
+                return@withContext Result.success(txHash)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to send transaction via $rpcUrl")
+                lastException = e
+                // Continue to try next RPC
             }
-
-            val txHash = response.transactionHash
-            Timber.d("✓ Transaction sent successfully!")
-            Timber.d("Transaction hash: $txHash")
-            Result.success(txHash)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to send signed transaction")
-            Result.failure(e)
         }
+
+        // All RPCs failed
+        Timber.e("All RPC endpoints failed")
+        Result.failure(lastException ?: Exception("All RPC endpoints failed"))
     }
 
     // =========================================================================

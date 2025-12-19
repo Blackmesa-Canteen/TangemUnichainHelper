@@ -1,5 +1,9 @@
 # Tangem Unichain App - Project Summary
 
+## Note
+
+AI generated content!
+
 ## 🎯 Project Overview
 
 This is a complete, production-ready Android application that solves your specific problem: **moving USDC and ETH from Unichain when the official Tangem app cannot sign transactions**.

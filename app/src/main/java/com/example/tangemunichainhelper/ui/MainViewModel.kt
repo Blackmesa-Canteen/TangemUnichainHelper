@@ -22,6 +22,7 @@ import org.web3j.utils.Numeric
 import timber.log.Timber
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.math.RoundingMode
 
 class MainViewModel : ViewModel() {
 
@@ -114,6 +115,65 @@ class MainViewModel : ViewModel() {
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * Calculate the maximum amount that can be transferred.
+     * For ETH: balance - estimated gas cost
+     * For USDC: full balance (but caller should validate ETH for gas)
+     */
+    suspend fun calculateMaxTransferAmount(isUsdc: Boolean): Result<MaxTransferInfo> {
+        val state = _uiState.value
+        val cardInfo = state.cardInfo ?: return Result.failure(Exception("Card not scanned"))
+
+        return try {
+            // Get current gas price
+            val gasPriceResult = web3Manager.getGasPrice()
+            val gasPrice = gasPriceResult.getOrElse {
+                return Result.failure(Exception("Failed to get gas price"))
+            }
+
+            // Use default gas limits for estimation
+            val gasLimit = if (isUsdc) {
+                NetworkConstants.DEFAULT_GAS_LIMIT_ERC20
+            } else {
+                NetworkConstants.DEFAULT_GAS_LIMIT_ETH
+            }
+
+            // Calculate gas cost in ETH
+            val gasCostWei = gasPrice.multiply(gasLimit)
+            val gasCostEth = BigDecimal(gasCostWei)
+                .divide(BigDecimal.TEN.pow(18), 18, RoundingMode.UP)
+
+            if (isUsdc) {
+                // For USDC: return full USDC balance, but check if ETH covers gas
+                val hasEnoughGas = state.ethBalance >= gasCostEth
+                Result.success(
+                    MaxTransferInfo(
+                        maxAmount = state.usdcBalance,
+                        gasCostEth = gasCostEth,
+                        hasEnoughGas = hasEnoughGas,
+                        gasPrice = gasPrice,
+                        gasLimit = gasLimit
+                    )
+                )
+            } else {
+                // For ETH: return balance minus gas cost
+                val maxEth = (state.ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
+                Result.success(
+                    MaxTransferInfo(
+                        maxAmount = maxEth,
+                        gasCostEth = gasCostEth,
+                        hasEnoughGas = state.ethBalance >= gasCostEth,
+                        gasPrice = gasPrice,
+                        gasLimit = gasLimit
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to calculate max transfer amount")
+            Result.failure(e)
         }
     }
 
@@ -211,6 +271,40 @@ class MainViewModel : ViewModel() {
                 val gasLimit = gasLimitResult.getOrElse {
                     if (isUsdc) NetworkConstants.DEFAULT_GAS_LIMIT_ERC20
                     else NetworkConstants.DEFAULT_GAS_LIMIT_ETH
+                }
+
+                // Calculate gas cost in ETH
+                val gasCostWei = gasPrice.multiply(gasLimit)
+                val gasCostEth = BigDecimal(gasCostWei)
+                    .divide(BigDecimal.TEN.pow(18), 18, RoundingMode.UP)
+
+                // Validate sufficient ETH for gas
+                val ethBalance = _uiState.value.ethBalance
+                if (isUsdc) {
+                    // For USDC: need ETH only for gas
+                    if (ethBalance < gasCostEth) {
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                error = "Insufficient ETH for gas. You need at least ${gasCostEth.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH for gas fees."
+                            )
+                        }
+                        return@launch
+                    }
+                } else {
+                    // For ETH: need amount + gas
+                    val amountInWei = amountDecimal.multiply(BigDecimal.TEN.pow(18)).toBigInteger()
+                    val totalNeeded = amountDecimal + gasCostEth
+                    if (ethBalance < totalNeeded) {
+                        val maxSendable = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                error = "Insufficient ETH. You need ${totalNeeded.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH (amount + gas), but have ${ethBalance.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH. Max sendable: ${maxSendable.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH"
+                            )
+                        }
+                        return@launch
+                    }
                 }
 
                 _uiState.update {
@@ -426,13 +520,20 @@ class MainViewModel : ViewModel() {
         val sBigInt = BigInteger(1, s)
 
         // Create the signed transaction manually using RLP encoding
+        // Note: data field must be converted from hex string to bytes
+        val dataBytes = if (rawTransaction.data.isNullOrEmpty()) {
+            ByteArray(0)
+        } else {
+            Numeric.hexStringToByteArray(rawTransaction.data)
+        }
+
         val signedValues = listOf(
             RlpString.create(rawTransaction.nonce),
             RlpString.create(rawTransaction.gasPrice),
             RlpString.create(rawTransaction.gasLimit),
             RlpString.create(Numeric.hexStringToByteArray(rawTransaction.to)),
             RlpString.create(rawTransaction.value),
-            RlpString.create(rawTransaction.data),
+            RlpString.create(dataBytes),
             RlpString.create(vBigInt),
             RlpString.create(rBigInt),
             RlpString.create(sBigInt)
@@ -602,4 +703,12 @@ data class TransferParams(
     val gasPrice: BigInteger,
     val gasLimit: BigInteger,
     val nonce: BigInteger
+)
+
+data class MaxTransferInfo(
+    val maxAmount: BigDecimal,
+    val gasCostEth: BigDecimal,
+    val hasEnoughGas: Boolean,
+    val gasPrice: BigInteger,
+    val gasLimit: BigInteger
 )

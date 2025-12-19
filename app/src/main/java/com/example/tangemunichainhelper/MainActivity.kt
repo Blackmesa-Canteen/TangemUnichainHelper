@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -20,11 +21,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.tangemunichainhelper.core.CardInfo
+import com.example.tangemunichainhelper.core.GasUtils
 import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
 import com.example.tangemunichainhelper.ui.MainViewModel
+import com.example.tangemunichainhelper.ui.MaxTransferInfo
 import com.example.tangemunichainhelper.ui.TransferParams
 import com.example.tangemunichainhelper.ui.theme.TangemUnichainTheme
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.math.BigInteger
 import androidx.compose.material3.ExperimentalMaterial3Api // Add for FilterChip
@@ -115,8 +119,13 @@ fun MainScreen(viewModel: MainViewModel) {
                 if (transferParams == null) {
                     TransferSection(
                         isLoading = uiState.isLoading,
+                        ethBalance = uiState.ethBalance.toPlainString(),
+                        usdcBalance = uiState.usdcBalance.toPlainString(),
                         onPrepareTransfer = { address, amount, isUsdc ->
                             viewModel.prepareTransfer(address, amount, isUsdc)
+                        },
+                        onCalculateMax = { isUsdc ->
+                            viewModel.calculateMaxTransferAmount(isUsdc)
                         }
                     )
                 } else {
@@ -349,11 +358,17 @@ fun BalanceRow(symbol: String, balance: String) {
 @Composable
 fun TransferSection(
     isLoading: Boolean,
-    onPrepareTransfer: (String, String, Boolean) -> Unit
+    ethBalance: String,
+    usdcBalance: String,
+    onPrepareTransfer: (String, String, Boolean) -> Unit,
+    onCalculateMax: suspend (Boolean) -> Result<MaxTransferInfo>
 ) {
     var recipientAddress by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var selectedToken by remember { mutableStateOf(0) } // 0 = ETH, 1 = USDC
+    var isCalculatingMax by remember { mutableStateOf(false) }
+    var maxInfo by remember { mutableStateOf<MaxTransferInfo?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -373,17 +388,30 @@ fun TransferSection(
             ) {
                 FilterChip(
                     selected = selectedToken == 0,
-                    onClick = { selectedToken = 0 },
+                    onClick = {
+                        selectedToken = 0
+                        maxInfo = null // Reset max info when switching tokens
+                    },
                     label = { Text("ETH") },
                     modifier = Modifier.weight(1f)
                 )
                 FilterChip(
                     selected = selectedToken == 1,
-                    onClick = { selectedToken = 1 },
+                    onClick = {
+                        selectedToken = 1
+                        maxInfo = null // Reset max info when switching tokens
+                    },
                     label = { Text("USDC") },
                     modifier = Modifier.weight(1f)
                 )
             }
+
+            // Show current balance for selected token
+            Text(
+                text = "Available: ${if (selectedToken == 0) ethBalance else usdcBalance} ${if (selectedToken == 0) "ETH" else "USDC"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             // Recipient Address
             OutlinedTextField(
@@ -395,7 +423,7 @@ fun TransferSection(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Amount
+            // Amount with Max button
             OutlinedTextField(
                 value = amount,
                 onValueChange = { amount = it },
@@ -403,8 +431,65 @@ fun TransferSection(
                 placeholder = { Text("0.0") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    TextButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                isCalculatingMax = true
+                                val result = onCalculateMax(selectedToken == 1)
+                                result.onSuccess { info ->
+                                    maxInfo = info
+                                    if (info.hasEnoughGas) {
+                                        // Set amount to max (with reasonable precision)
+                                        amount = if (selectedToken == 1) {
+                                            info.maxAmount.setScale(6, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString()
+                                        } else {
+                                            info.maxAmount.setScale(8, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString()
+                                        }
+                                    }
+                                }
+                                isCalculatingMax = false
+                            }
+                        },
+                        enabled = !isLoading && !isCalculatingMax
+                    ) {
+                        if (isCalculatingMax) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                        } else {
+                            Text("Max")
+                        }
+                    }
+                }
             )
+
+            // Show max info if calculated
+            maxInfo?.let { info ->
+                val gasFeeWei = info.gasPrice.multiply(info.gasLimit)
+                val formattedGasFee = GasUtils.formatGasFeeEth(gasFeeWei)
+
+                if (!info.hasEnoughGas) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Insufficient ETH for gas. You need at least $formattedGasFee for gas fees.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "Est. gas fee: $formattedGasFee",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Button(
                 onClick = {
@@ -413,7 +498,14 @@ fun TransferSection(
                 enabled = !isLoading && recipientAddress.isNotBlank() && amount.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Prepare Transfer")
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text("Prepare Transfer")
+                }
             }
         }
     }
@@ -428,10 +520,13 @@ fun TransferConfirmationSection(
     onUpdateGas: (BigInteger, BigInteger) -> Unit
 ) {
     var editingGas by remember { mutableStateOf(false) }
-    var gasPriceGwei by remember {
+    // Use transferParams values as keys so state updates when they change
+    var gasPriceGwei by remember(transferParams.gasPrice) {
         mutableStateOf(transferParams.gasPrice.divide(BigInteger.TEN.pow(9)).toString())
     }
-    var gasLimit by remember { mutableStateOf(transferParams.gasLimit.toString()) }
+    var gasLimit by remember(transferParams.gasLimit) {
+        mutableStateOf(transferParams.gasLimit.toString())
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -458,14 +553,15 @@ fun TransferConfirmationSection(
             Divider()
 
             if (!editingGas) {
-                InfoRow("Gas Price", "${transferParams.gasPrice.divide(BigInteger.TEN.pow(9))} Gwei")
-                InfoRow("Gas Limit", transferParams.gasLimit.toString())
+                // Format gas values for better readability
+                val formattedGasPrice = GasUtils.formatGasPriceGwei(transferParams.gasPrice)
+                val formattedGasLimit = GasUtils.formatGasLimit(transferParams.gasLimit, transferParams.isUsdc)
+                val gasFeeWei = GasUtils.calculateGasFeeWei(transferParams.gasPrice, transferParams.gasLimit)
+                val formattedGasFee = GasUtils.formatGasFeeEth(gasFeeWei)
 
-                val gasFee = transferParams.gasPrice
-                    .multiply(transferParams.gasLimit)
-                    .toBigDecimal()
-                    .divide(BigInteger.TEN.pow(18).toBigDecimal())
-                InfoRow("Est. Gas Fee", "$gasFee ETH")
+                InfoRow("Gas Price", "$formattedGasPrice Gwei")
+                InfoRow("Gas Limit", formattedGasLimit)
+                InfoRow("Est. Gas Fee", formattedGasFee)
 
                 OutlinedButton(
                     onClick = { editingGas = true },

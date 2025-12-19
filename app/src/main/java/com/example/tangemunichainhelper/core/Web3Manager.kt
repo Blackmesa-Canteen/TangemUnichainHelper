@@ -155,8 +155,10 @@ class Web3Manager {
             }
 
             val estimatedGas = gasEstimate.amountUsed
-            Timber.d("Estimated gas for ETH transfer: $estimatedGas")
-            Result.success(estimatedGas)
+            // Add 20% buffer to prevent out-of-gas failures
+            val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
+            Timber.d("Estimated gas for ETH transfer: $estimatedGas (with buffer: $bufferedGas)")
+            Result.success(bufferedGas)
         } catch (e: Exception) {
             Timber.e(e, "Failed to estimate gas for ETH transfer")
             // Return default if estimation fails
@@ -197,8 +199,10 @@ class Web3Manager {
             }
 
             val estimatedGas = gasEstimate.amountUsed
-            Timber.d("Estimated gas for USDC transfer: $estimatedGas")
-            Result.success(estimatedGas)
+            // Add 20% buffer to prevent out-of-gas failures
+            val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
+            Timber.d("Estimated gas for USDC transfer: $estimatedGas (with buffer: $bufferedGas)")
+            Result.success(bufferedGas)
         } catch (e: Exception) {
             Timber.e(e, "Failed to estimate gas for USDC transfer")
             // Return default if estimation fails

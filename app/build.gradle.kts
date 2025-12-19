@@ -16,8 +16,13 @@ android {
         applicationId = "com.example.tangemunichainhelper"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+
+        // Version from gradle.properties (can be overridden by CI)
+        val versionCodeProp = project.findProperty("VERSION_CODE")?.toString()?.toIntOrNull() ?: 1
+        val versionNameProp = project.findProperty("VERSION_NAME")?.toString() ?: "1.0.0"
+
+        versionCode = versionCodeProp
+        versionName = versionNameProp
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

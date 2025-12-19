@@ -4,8 +4,16 @@
 [![API](https://img.shields.io/badge/API-26%2B-brightgreen.svg)](https://android-arsenal.com/api?level=26)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9-blue.svg)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/actions/workflows/ci.yml/badge.svg)](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Blackmesa-Canteen/TangemUnichainHelper?include_prereleases)](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/releases)
 
 An Android app that enables **Tangem NFC card** users to transfer ETH and ERC-20 tokens on **Unichain** (Chain ID: 130) — a network not officially supported by the Tangem app.
+
+## Download
+
+**[Download the latest APK from Releases](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/releases/latest)**
+
+Or build from source (see below).
 
 ## Why This Exists
 
@@ -53,7 +61,7 @@ The official Tangem app doesn't support Unichain. If you have funds stuck on Uni
 #### Option 2: Build from Source
 ```bash
 # Clone the repository
-git clone https://github.com/996Worker/tangem-unichain-helper.git
+git clone https://github.com/Blackmesa-Canteen/TangemUnichainHelper.git
 cd tangem-unichain-helper
 
 # Build debug APK
@@ -212,6 +220,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 - [DEVELOPER.md](DEVELOPER.md) — Technical deep-dive, the "hack" explained, adding tokens/networks
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
+- [CHANGELOG.md](CHANGELOG.md) — Version history and release notes
 
 ## Disclaimer
 

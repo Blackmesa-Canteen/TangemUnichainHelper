@@ -250,4 +250,4 @@ If this project helped you recover your funds, consider supporting development:
 
 ---
 
-**If this project helped you recover your funds, consider starring the repo!**
+**If this project helped you recover your funds, consider starring the repo**

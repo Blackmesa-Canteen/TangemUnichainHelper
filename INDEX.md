@@ -141,22 +141,21 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ## 🔑 Key Information
 
-### Your Configuration
+### Network Configuration
 ```
 Network: Unichain Mainnet
 Chain ID: 130
-Wallet: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
-RPC: https://rpc.unichain.org
+RPC: https://mainnet.unichain.org
 Explorer: https://uniscan.xyz
 USDC: 0x078D782b760474a361dDA0AF3839290b0EF57AD6
 ```
 
 ### Requirements
-- Android 7.0+ (API 24)
+- Android 8.0+ (API 26)
 - Device with NFC
 - Tangem card
 - 4-digit access code
-- Android Studio 2024.1.1+ (for building)
+- Android Studio 2024.2+ (for building)
 - JDK 17
 
 ## 🎯 Typical Transaction Flow

@@ -6,6 +6,8 @@ import com.example.tangemunichainhelper.core.AddressUtils
 import com.example.tangemunichainhelper.core.CardInfo
 import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
+import com.example.tangemunichainhelper.core.Token
+import com.example.tangemunichainhelper.core.TokenRegistry
 import com.example.tangemunichainhelper.core.Web3Manager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -96,24 +98,30 @@ class MainViewModel : ViewModel() {
                 return@launch
             }
 
-            _uiState.update { it.copy(isLoading = true) }
+            _uiState.update { it.copy(isLoadingBalances = true) }
 
             // Use the address from scanned card
             val address = cardInfo.walletAddress
 
-            val ethBalanceResult = web3Manager.getEthBalance(address)
-            val usdcBalanceResult = web3Manager.getUsdcBalance(address)
+            // Load balances for all registered tokens
+            val balanceResults = web3Manager.getAllTokenBalances(address)
+
+            // Convert to Map<String, BigDecimal>, defaulting failed ones to ZERO
+            val balances = balanceResults.mapValues { (_, result) ->
+                result.getOrDefault(BigDecimal.ZERO)
+            }
+
+            // Find any errors
+            val errors = balanceResults.filter { it.value.isFailure }
+            val errorMessage = if (errors.isNotEmpty()) {
+                "Failed to load: ${errors.keys.joinToString(", ")}"
+            } else null
 
             _uiState.update {
                 it.copy(
-                    isLoading = false,
-                    ethBalance = ethBalanceResult.getOrDefault(BigDecimal.ZERO),
-                    usdcBalance = usdcBalanceResult.getOrDefault(BigDecimal.ZERO),
-                    error = when {
-                        ethBalanceResult.isFailure -> "Failed to load ETH balance"
-                        usdcBalanceResult.isFailure -> "Failed to load USDC balance"
-                        else -> null
-                    }
+                    isLoadingBalances = false,
+                    tokenBalances = balances,
+                    error = errorMessage
                 )
             }
         }
@@ -121,10 +129,12 @@ class MainViewModel : ViewModel() {
 
     /**
      * Calculate the maximum amount that can be transferred.
-     * For ETH: balance - estimated gas cost
-     * For USDC: full balance (but caller should validate ETH for gas)
+     * For native ETH: balance - estimated gas cost
+     * For ERC-20: full token balance (but validates ETH for gas)
+     *
+     * @param token The token to calculate max for
      */
-    suspend fun calculateMaxTransferAmount(isUsdc: Boolean): Result<MaxTransferInfo> {
+    suspend fun calculateMaxTransferAmount(token: Token): Result<MaxTransferInfo> {
         val state = _uiState.value
         val cardInfo = state.cardInfo ?: return Result.failure(Exception("Card not scanned"))
 
@@ -135,53 +145,68 @@ class MainViewModel : ViewModel() {
                 return Result.failure(Exception("Failed to get gas price"))
             }
 
-            // Use default gas limits for estimation
-            val gasLimit = if (isUsdc) {
-                NetworkConstants.DEFAULT_GAS_LIMIT_ERC20
-            } else {
-                NetworkConstants.DEFAULT_GAS_LIMIT_ETH
-            }
+            // Use default gas limit for the token type
+            val gasLimit = token.defaultGasLimit
 
             // Calculate gas cost in ETH
             val gasCostWei = gasPrice.multiply(gasLimit)
             val gasCostEth = BigDecimal(gasCostWei)
                 .divide(BigDecimal.TEN.pow(18), 18, RoundingMode.UP)
 
-            if (isUsdc) {
-                // For USDC: return full USDC balance, but check if ETH covers gas
-                val hasEnoughGas = state.ethBalance >= gasCostEth
-                Result.success(
-                    MaxTransferInfo(
-                        maxAmount = state.usdcBalance,
-                        gasCostEth = gasCostEth,
-                        hasEnoughGas = hasEnoughGas,
-                        gasPrice = gasPrice,
-                        gasLimit = gasLimit
+            val ethBalance = state.ethBalance
+            val tokenBalance = state.getBalance(token)
+
+            when (token) {
+                is Token.ETH -> {
+                    // For ETH: return balance minus gas cost
+                    val maxEth = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
+                    Result.success(
+                        MaxTransferInfo(
+                            maxAmount = maxEth,
+                            gasCostEth = gasCostEth,
+                            hasEnoughGas = ethBalance >= gasCostEth,
+                            gasPrice = gasPrice,
+                            gasLimit = gasLimit
+                        )
                     )
-                )
-            } else {
-                // For ETH: return balance minus gas cost
-                val maxEth = (state.ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
-                Result.success(
-                    MaxTransferInfo(
-                        maxAmount = maxEth,
-                        gasCostEth = gasCostEth,
-                        hasEnoughGas = state.ethBalance >= gasCostEth,
-                        gasPrice = gasPrice,
-                        gasLimit = gasLimit
+                }
+                is Token.ERC20 -> {
+                    // For ERC-20: return full token balance, but check if ETH covers gas
+                    val hasEnoughGas = ethBalance >= gasCostEth
+                    Result.success(
+                        MaxTransferInfo(
+                            maxAmount = tokenBalance,
+                            gasCostEth = gasCostEth,
+                            hasEnoughGas = hasEnoughGas,
+                            gasPrice = gasPrice,
+                            gasLimit = gasLimit
+                        )
                     )
-                )
+                }
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to calculate max transfer amount")
+            Timber.e(e, "Failed to calculate max transfer amount for ${token.symbol}")
             Result.failure(e)
         }
     }
 
+    // Backward compatibility wrapper
+    suspend fun calculateMaxTransferAmount(isUsdc: Boolean): Result<MaxTransferInfo> {
+        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.ETH
+        return calculateMaxTransferAmount(token)
+    }
+
+    /**
+     * Prepare a transfer for any token.
+     *
+     * @param recipientAddress The recipient's Ethereum address
+     * @param amount The amount to transfer (in human-readable units)
+     * @param token The token to transfer
+     */
     fun prepareTransfer(
         recipientAddress: String,
         amount: String,
-        isUsdc: Boolean
+        token: Token
     ) {
         viewModelScope.launch {
             val cardInfo = currentCardInfo
@@ -193,7 +218,6 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             try {
-                // Use the address from scanned card
                 val fromAddress = cardInfo.walletAddress
 
                 // Validate recipient address with EIP-55 checksum support
@@ -264,58 +288,60 @@ class MainViewModel : ViewModel() {
                     return@launch
                 }
 
-                // Estimate gas
-                val gasLimitResult = if (isUsdc) {
-                    val amountInSmallestUnit = amountDecimal.multiply(BigDecimal.TEN.pow(6)).toBigInteger()
-                    web3Manager.estimateGasForUsdcTransfer(
-                        fromAddress,
-                        recipientAddress,
-                        amountInSmallestUnit
-                    )
-                } else {
-                    val amountInWei = amountDecimal.multiply(BigDecimal.TEN.pow(18)).toBigInteger()
-                    web3Manager.estimateGasForEthTransfer(
-                        fromAddress,
-                        recipientAddress,
-                        amountInWei
-                    )
-                }
+                // Estimate gas using generic method
+                val amountInSmallestUnit = token.toSmallestUnit(amountDecimal)
+                val gasLimitResult = web3Manager.estimateGasForTransfer(
+                    fromAddress,
+                    recipientAddress,
+                    token,
+                    amountInSmallestUnit
+                )
 
-                val gasLimit = gasLimitResult.getOrElse {
-                    if (isUsdc) NetworkConstants.DEFAULT_GAS_LIMIT_ERC20
-                    else NetworkConstants.DEFAULT_GAS_LIMIT_ETH
-                }
+                val gasLimit = gasLimitResult.getOrElse { token.defaultGasLimit }
 
                 // Calculate gas cost in ETH
                 val gasCostWei = gasPrice.multiply(gasLimit)
                 val gasCostEth = BigDecimal(gasCostWei)
                     .divide(BigDecimal.TEN.pow(18), 18, RoundingMode.UP)
 
-                // Validate sufficient ETH for gas
+                // Validate sufficient balance
                 val ethBalance = _uiState.value.ethBalance
-                if (isUsdc) {
-                    // For USDC: need ETH only for gas
-                    if (ethBalance < gasCostEth) {
-                        _uiState.update {
-                            it.copy(
-                                isLoading = false,
-                                error = "Insufficient ETH for gas. You need at least ${gasCostEth.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH for gas fees."
-                            )
+                when (token) {
+                    is Token.ETH -> {
+                        // For ETH: need amount + gas
+                        val totalNeeded = amountDecimal + gasCostEth
+                        if (ethBalance < totalNeeded) {
+                            val maxSendable = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    error = "Insufficient ETH. You need ${totalNeeded.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH (amount + gas), but have ${ethBalance.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH. Max sendable: ${maxSendable.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH"
+                                )
+                            }
+                            return@launch
                         }
-                        return@launch
                     }
-                } else {
-                    // For ETH: need amount + gas
-                    val totalNeeded = amountDecimal + gasCostEth
-                    if (ethBalance < totalNeeded) {
-                        val maxSendable = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
-                        _uiState.update {
-                            it.copy(
-                                isLoading = false,
-                                error = "Insufficient ETH. You need ${totalNeeded.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH (amount + gas), but have ${ethBalance.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH. Max sendable: ${maxSendable.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH"
-                            )
+                    is Token.ERC20 -> {
+                        // For ERC-20: need ETH for gas, and enough token balance
+                        if (ethBalance < gasCostEth) {
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    error = "Insufficient ETH for gas. You need at least ${gasCostEth.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH for gas fees."
+                                )
+                            }
+                            return@launch
                         }
-                        return@launch
+                        val tokenBalance = _uiState.value.getBalance(token)
+                        if (tokenBalance < amountDecimal) {
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    error = "Insufficient ${token.symbol} balance. You have ${tokenBalance.stripTrailingZeros().toPlainString()} ${token.symbol}."
+                                )
+                            }
+                            return@launch
+                        }
                     }
                 }
 
@@ -325,7 +351,7 @@ class MainViewModel : ViewModel() {
                         transferParams = TransferParams(
                             recipientAddress = recipientAddress,
                             amount = amountDecimal,
-                            isUsdc = isUsdc,
+                            token = token,
                             gasPrice = gasPrice,
                             gasLimit = gasLimit,
                             nonce = nonce
@@ -333,7 +359,7 @@ class MainViewModel : ViewModel() {
                     )
                 }
             } catch (e: Exception) {
-                Timber.e(e, "Failed to prepare transfer")
+                Timber.e(e, "Failed to prepare ${token.symbol} transfer")
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -342,6 +368,12 @@ class MainViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    // Backward compatibility wrapper
+    fun prepareTransfer(recipientAddress: String, amount: String, isUsdc: Boolean) {
+        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.ETH
+        prepareTransfer(recipientAddress, amount, token)
     }
 
     fun updateGasParams(gasPrice: BigInteger, gasLimit: BigInteger) {
@@ -380,24 +412,15 @@ class MainViewModel : ViewModel() {
             Timber.d("Balance at ${cardInfo.walletAddress}: ${balanceCheck.getOrNull()} ETH")
 
             try {
-                // Create transaction
-                val rawTransactionResult = if (transferParams.isUsdc) {
-                    web3Manager.createUsdcTransferTransaction(
-                        to = transferParams.recipientAddress,
-                        amountInUsdc = transferParams.amount,
-                        gasPrice = transferParams.gasPrice,
-                        gasLimit = transferParams.gasLimit,
-                        nonce = transferParams.nonce
-                    )
-                } else {
-                    web3Manager.createEthTransferTransaction(
-                        to = transferParams.recipientAddress,
-                        amountInEth = transferParams.amount,
-                        gasPrice = transferParams.gasPrice,
-                        gasLimit = transferParams.gasLimit,
-                        nonce = transferParams.nonce
-                    )
-                }
+                // Create transaction using generic method
+                val rawTransactionResult = web3Manager.createTransferTransaction(
+                    to = transferParams.recipientAddress,
+                    token = transferParams.token,
+                    amount = transferParams.amount,
+                    gasPrice = transferParams.gasPrice,
+                    gasLimit = transferParams.gasLimit,
+                    nonce = transferParams.nonce
+                )
 
                 val rawTransaction = rawTransactionResult.getOrElse { error ->
                     _uiState.update {
@@ -718,21 +741,34 @@ data class UiState(
     val isLoading: Boolean = false,
     val isLoadingBalances: Boolean = false,
     val cardInfo: CardInfo? = null,
-    val ethBalance: BigDecimal = BigDecimal.ZERO,
-    val usdcBalance: BigDecimal = BigDecimal.ZERO,
+    /** Map of token symbol to balance. Use getBalance(token) helper. */
+    val tokenBalances: Map<String, BigDecimal> = emptyMap(),
     val transferParams: TransferParams? = null,
     val lastTransactionHash: String? = null,
     val error: String? = null
-)
+) {
+    /** Get balance for a specific token. Returns ZERO if not loaded. */
+    fun getBalance(token: Token): BigDecimal = tokenBalances[token.symbol] ?: BigDecimal.ZERO
+
+    /** Shortcut for ETH balance. */
+    val ethBalance: BigDecimal get() = getBalance(TokenRegistry.ETH)
+
+    /** Shortcut for USDC balance (for backward compatibility). */
+    val usdcBalance: BigDecimal get() = getBalance(TokenRegistry.USDC)
+}
 
 data class TransferParams(
     val recipientAddress: String,
     val amount: BigDecimal,
-    val isUsdc: Boolean,
+    /** The token being transferred. */
+    val token: Token,
     val gasPrice: BigInteger,
     val gasLimit: BigInteger,
     val nonce: BigInteger
-)
+) {
+    /** For backward compatibility. */
+    val isUsdc: Boolean get() = token.symbol == "USDC"
+}
 
 data class MaxTransferInfo(
     val maxAmount: BigDecimal,

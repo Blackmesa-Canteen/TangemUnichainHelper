@@ -4,7 +4,6 @@ This guide is specifically for your situation: recovering USDC and ETH from Unic
 
 ## Your Situation
 
-- **Wallet Address**: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
 - **Network**: Unichain Mainnet (Chain ID 130)
 - **Problem**: Official Tangem app cannot sign transactions on Unichain
 - **Solution**: This custom app that uses Tangem SDK directly

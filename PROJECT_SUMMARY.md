@@ -8,9 +8,9 @@ This is a complete, production-ready Android application that solves your specif
 
 | Requirement | Status | Implementation |
 |------------|--------|----------------|
-| Run on Android | ✅ Complete | Min SDK 24, Target SDK 34 |
+| Run on Android | ✅ Complete | Min SDK 26, Target SDK 36 |
 | Simple but functional | ✅ Complete | Clean Material Design 3 UI |
-| Read Tangem card with NFC | ✅ Complete | Full Tangem SDK 3.8.0 integration |
+| Read Tangem card with NFC | ✅ Complete | Full Tangem SDK 3.9.2 integration |
 | Protected by access code | ✅ Complete | 4-digit code required for signing |
 | View ETH & USDC balance | ✅ Complete | Live balance from Unichain RPC |
 | Transfer ETH to address | ✅ Complete | Native ETH transfers with gas estimation |
@@ -18,7 +18,7 @@ This is a complete, production-ready Android application that solves your specif
 | Proper gas handling | ✅ Complete | Auto-estimation + manual editing |
 | View transaction ID | ✅ Complete | Copyable hash + explorer link |
 | Error handling | ✅ Complete | Comprehensive error messages |
-| Follow latest docs | ✅ Complete | Tangem SDK 3.8.0, Web3j 4.11.3 |
+| Follow latest docs | ✅ Complete | Tangem SDK 3.9.2, Web3j 5.0.1 |
 | Code correctness | ✅ Complete | Type-safe, tested patterns |
 
 ## 📁 Project Structure
@@ -218,13 +218,9 @@ RawTransaction.createTransaction(
 
 ### Network Configuration
 - **Chain ID**: 130 (Unichain Mainnet)
-- **RPC**: https://rpc.unichain.org
+- **RPC**: https://mainnet.unichain.org
 - **Explorer**: https://uniscan.xyz
 - **USDC Contract**: 0x078D782b760474a361dDA0AF3839290b0EF57AD6
-
-### Your Wallet
-- **Address**: 0x5A4dC932a92Eb68529522eA79b566C01515F6436
-- **Configured in**: `NetworkConstants.kt`
 
 ### Gas Fee Estimates
 - **ETH Transfer**: ~21,000 gas (~$0.0001)

@@ -23,6 +23,15 @@ import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
 
+/**
+ * Manages all Web3/blockchain interactions.
+ *
+ * This class provides methods for:
+ * - Querying balances (ETH and any ERC-20 token)
+ * - Creating transactions
+ * - Estimating gas
+ * - Broadcasting signed transactions
+ */
 class Web3Manager {
     private val web3j: Web3j = Web3j.build(HttpService(NetworkConstants.RPC_URL))
 
@@ -333,6 +342,200 @@ class Web3Manager {
             Result.success(txHash)
         } catch (e: Exception) {
             Timber.e(e, "Failed to send signed transaction")
+            Result.failure(e)
+        }
+    }
+
+    // =========================================================================
+    // GENERIC TOKEN METHODS
+    // These methods work with any Token from TokenRegistry
+    // =========================================================================
+
+    /**
+     * Get balance for any token (ETH or ERC-20).
+     *
+     * @param address The wallet address to check
+     * @param token The token to get balance for
+     * @return Balance in human-readable units (e.g., "1.5" ETH, "100" USDC)
+     */
+    suspend fun getTokenBalance(address: String, token: Token): Result<BigDecimal> {
+        return when (token) {
+            is Token.ETH -> getEthBalance(address)
+            is Token.ERC20 -> getErc20Balance(address, token)
+        }
+    }
+
+    /**
+     * Get ERC-20 token balance.
+     */
+    suspend fun getErc20Balance(address: String, token: Token.ERC20): Result<BigDecimal> = withContext(Dispatchers.IO) {
+        try {
+            val function = Function(
+                "balanceOf",
+                listOf(Address(address)),
+                listOf(object : TypeReference<Uint256>() {})
+            )
+
+            val encodedFunction = FunctionEncoder.encode(function)
+
+            val response = web3j.ethCall(
+                Transaction.createEthCallTransaction(
+                    address,
+                    token.contractAddress,
+                    encodedFunction
+                ),
+                DefaultBlockParameterName.LATEST
+            ).send()
+
+            if (response.hasError()) {
+                throw Exception("Error calling ${token.symbol} contract: ${response.error.message}")
+            }
+
+            val returnValues = FunctionReturnDecoder.decode(
+                response.value,
+                function.outputParameters
+            )
+
+            if (returnValues.isEmpty()) {
+                throw Exception("Empty response from ${token.symbol} contract")
+            }
+
+            val balanceInSmallestUnit = (returnValues[0] as Uint256).value
+            val balance = token.fromSmallestUnit(balanceInSmallestUnit)
+
+            Timber.d("${token.symbol} Balance: $balance")
+            Result.success(balance)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to get ${token.symbol} balance")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Get balances for all tokens in TokenRegistry.
+     *
+     * @param address The wallet address to check
+     * @return Map of token symbol to balance
+     */
+    suspend fun getAllTokenBalances(address: String): Map<String, Result<BigDecimal>> {
+        return TokenRegistry.allTokens.associate { token ->
+            token.symbol to getTokenBalance(address, token)
+        }
+    }
+
+    /**
+     * Estimate gas for any token transfer.
+     */
+    suspend fun estimateGasForTransfer(
+        from: String,
+        to: String,
+        token: Token,
+        amount: BigInteger
+    ): Result<BigInteger> {
+        return when (token) {
+            is Token.ETH -> estimateGasForEthTransfer(from, to, amount)
+            is Token.ERC20 -> estimateGasForErc20Transfer(from, to, token, amount)
+        }
+    }
+
+    /**
+     * Estimate gas for ERC-20 transfer.
+     */
+    suspend fun estimateGasForErc20Transfer(
+        from: String,
+        to: String,
+        token: Token.ERC20,
+        amount: BigInteger
+    ): Result<BigInteger> = withContext(Dispatchers.IO) {
+        try {
+            val function = Function(
+                "transfer",
+                listOf(Address(to), Uint256(amount)),
+                emptyList()
+            )
+
+            val encodedFunction = FunctionEncoder.encode(function)
+
+            val transaction = Transaction.createFunctionCallTransaction(
+                from,
+                null,
+                null,
+                null,
+                token.contractAddress,
+                encodedFunction
+            )
+
+            val gasEstimate = web3j.ethEstimateGas(transaction).send()
+
+            if (gasEstimate.hasError()) {
+                throw Exception("Gas estimation error: ${gasEstimate.error.message}")
+            }
+
+            val estimatedGas = gasEstimate.amountUsed
+            val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
+            Timber.d("Estimated gas for ${token.symbol} transfer: $estimatedGas (with buffer: $bufferedGas)")
+            Result.success(bufferedGas)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to estimate gas for ${token.symbol} transfer")
+            Result.success(token.defaultGasLimit)
+        }
+    }
+
+    /**
+     * Create unsigned transaction for any token transfer.
+     */
+    suspend fun createTransferTransaction(
+        to: String,
+        token: Token,
+        amount: BigDecimal,
+        gasPrice: BigInteger,
+        gasLimit: BigInteger,
+        nonce: BigInteger
+    ): Result<RawTransaction> {
+        return when (token) {
+            is Token.ETH -> createEthTransferTransaction(to, amount, gasPrice, gasLimit, nonce)
+            is Token.ERC20 -> createErc20TransferTransaction(to, token, amount, gasPrice, gasLimit, nonce)
+        }
+    }
+
+    /**
+     * Create unsigned ERC-20 transfer transaction.
+     */
+    suspend fun createErc20TransferTransaction(
+        to: String,
+        token: Token.ERC20,
+        amount: BigDecimal,
+        gasPrice: BigInteger,
+        gasLimit: BigInteger,
+        nonce: BigInteger
+    ): Result<RawTransaction> = withContext(Dispatchers.IO) {
+        try {
+            val amountInSmallestUnit = token.toSmallestUnit(amount)
+
+            val function = Function(
+                "transfer",
+                listOf(
+                    Address(to),
+                    Uint256(amountInSmallestUnit)
+                ),
+                emptyList()
+            )
+
+            val encodedFunction = FunctionEncoder.encode(function)
+
+            val rawTransaction = RawTransaction.createTransaction(
+                nonce,
+                gasPrice,
+                gasLimit,
+                token.contractAddress,
+                BigInteger.ZERO,
+                encodedFunction
+            )
+
+            Timber.d("Created ${token.symbol} transfer transaction: $amount ${token.symbol} to $to")
+            Result.success(rawTransaction)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to create ${token.symbol} transfer transaction")
             Result.failure(e)
         }
     }

@@ -114,18 +114,21 @@ object TokenRegistry {
         decimals = 6
     )
 
+    /**
+     * USDT0 (Tether USD) on Unichain.
+     * USDT0 is an omnichain version of Tether's USD₮ stablecoin using LayerZero.
+     * Contract: https://uniscan.xyz/token/0x9151434b16b9763660705744891fa906f660ecc5
+     */
+    val USDT = Token.ERC20(
+        symbol = "USDT",
+        name = "Tether USD",
+        contractAddress = "0x9151434b16b9763660705744891fa906f660ecc5",
+        decimals = 6
+    )
+
     // =========================================================================
     // ADD NEW TOKENS HERE
     // =========================================================================
-    //
-    // Example: USDT (uncomment and update contract address when available)
-    //
-    // val USDT = Token.ERC20(
-    //     symbol = "USDT",
-    //     name = "Tether USD",
-    //     contractAddress = "0x...", // TODO: Add Unichain USDT contract address
-    //     decimals = 6
-    // )
     //
     // Example: WETH
     //
@@ -145,8 +148,8 @@ object TokenRegistry {
     val allTokens: List<Token> = listOf(
         ETH,
         USDC,
+        USDT,
         // Add new tokens here:
-        // USDT,
         // WETH,
     )
 

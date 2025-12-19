@@ -302,16 +302,18 @@ class Web3Manager {
 
     /**
      * Get transaction hash for signing with Tangem
-     * Uses LEGACY format (no chain ID) for maximum compatibility
+     * Uses EIP-155 format (with chain ID) for replay protection
      */
     fun getTransactionHashForTangemSigning(rawTransaction: RawTransaction): ByteArray {
-        // Encode transaction WITHOUT chain ID (legacy format)
-        val encoded = TransactionEncoder.encode(rawTransaction)
+        // Encode transaction WITH chain ID (EIP-155 format)
+        // This creates: rlp(nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0)
+        val encoded = TransactionEncoder.encode(rawTransaction, NetworkConstants.CHAIN_ID)
 
         // Hash it with Keccak256
         val hash = Hash.sha3(encoded)
 
-        Timber.d("Legacy encoded tx length: ${encoded.size} bytes")
+        Timber.d("EIP-155 encoded tx length: ${encoded.size} bytes")
+        Timber.d("Chain ID: ${NetworkConstants.CHAIN_ID}")
         Timber.d("Keccak256 hash: ${Numeric.toHexString(hash)}")
 
         return hash

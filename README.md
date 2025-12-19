@@ -20,7 +20,7 @@ Or build from source (see below).
 The official Tangem app doesn't support Unichain. If you have funds stuck on Unichain that were sent to your Tangem wallet address, this app lets you recover them using your Tangem card.
 
 **Key Features:**
-- Transfer ETH and ERC-20 tokens (USDC, etc.) on Unichain
+- Transfer ETH and ERC-20 tokens (USDC, USDT) on Unichain
 - Scan any Tangem card via NFC
 - View token balances
 - Automatic gas estimation with manual editing
@@ -83,22 +83,23 @@ cd tangem-unichain-helper
 |-------|----------|----------|
 | ETH | Native | 18 |
 | USDC | `0x078D782b760474a361dDA0AF3839290b0EF57AD6` | 6 |
+| USDT | `0x9151434b16b9763660705744891fa906f660ecc5` | 6 |
 
 Want to add more tokens? See [Adding New Tokens](#adding-new-tokens).
 
 ## How It Works
 
-Since Tangem SDK doesn't support Unichain, we use a **legacy transaction format** that's chain-agnostic:
+The Tangem card signs whatever hash you give it — it doesn't care about chains. We leverage this to sign **EIP-155 transactions** for Unichain:
 
 ```
 1. Create transaction (nonce, gasPrice, to, value, data)
-2. Hash WITHOUT chain ID (legacy format)
-3. Tangem signs the hash (card doesn't know which chain)
-4. Encode with legacy v value (27 or 28)
+2. Hash WITH chain ID 130 (EIP-155 format)
+3. Tangem signs the hash (card just signs bytes)
+4. Encode with EIP-155 v value (chainId*2 + 35 + recoveryId)
 5. Broadcast to Unichain RPC
 ```
 
-This works because legacy transactions are valid on any EVM chain. See [DEVELOPER.md](DEVELOPER.md) for technical details.
+This creates a **replay-protected** transaction that's valid only on Unichain. See [DEVELOPER.md](DEVELOPER.md) for technical details.
 
 ## Adding New Tokens
 
@@ -130,8 +131,14 @@ Edit `core/NetworkConstants.kt` to change network:
 ```kotlin
 object NetworkConstants {
     const val CHAIN_ID = 130L
-    const val RPC_URL = "https://mainnet.unichain.org"
+    const val RPC_URL = "https://unichain.drpc.org"  // Primary RPC (reliable)
     const val EXPLORER_URL = "https://uniscan.xyz"
+
+    // Fallback RPCs for reliability
+    val RPC_URLS = listOf(
+        "https://unichain.drpc.org",
+        "https://mainnet.unichain.org"
+    )
 }
 ```
 
@@ -168,7 +175,9 @@ app/src/main/java/com/example/tangemunichainhelper/
 - Check [Uniscan](https://uniscan.xyz) for network status
 
 ### "Invalid Sender" Error
-This means the transaction signature is invalid. If you modified the code, ensure v value uses legacy format (`27 + recoveryId`), not EIP-155 format.
+This means the transaction signature is invalid. If you modified the code, ensure:
+- Hash uses EIP-155 format (includes chain ID)
+- v value = `chainId * 2 + 35 + recoveryId` (for Unichain: 295 or 296)
 
 ### Balance Not Showing
 - Tap refresh button
@@ -200,11 +209,15 @@ This means the transaction signature is invalid. If you modified the code, ensur
 
 ### Dependencies
 
-- Tangem SDK 3.8.2
+- Tangem SDK 3.9.2
 - Web3j 5.0.1
 - Jetpack Compose + Material 3
 - Kotlin Coroutines 1.6.4
 - Timber (logging)
+
+### Requirements
+
+- Java 21 (required by web3j 5.0.1)
 
 ## Contributing
 

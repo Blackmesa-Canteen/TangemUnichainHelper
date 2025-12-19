@@ -562,23 +562,17 @@ class MainViewModel : ViewModel() {
         Timber.d("r: ${Numeric.toHexString(r)}")
         Timber.d("s: ${Numeric.toHexString(s)}")
 
-        // IMPORTANT: Since we sign with LEGACY hash format (no chain ID in hash),
-        // we MUST use legacy v value (27 or 28), NOT EIP-155 v value.
+        // EIP-155 v value calculation:
+        // v = chainId * 2 + 35 + recoveryId
         //
-        // EIP-155 rule: If you sign hash(rlp(nonce,gasPrice,gasLimit,to,value,data,chainId,0,0))
-        //               then use v = chainId * 2 + 35 + recoveryId
-        //               If you sign hash(rlp(nonce,gasPrice,gasLimit,to,value,data)) [legacy]
-        //               then use v = 27 + recoveryId
-        //
-        // This is the "hack" that makes Tangem work with Unichain:
-        // - Tangem signs legacy hash (chain-agnostic)
-        // - We broadcast with legacy v value
-        // - Transaction is valid on any EVM chain (including Unichain)
-        // - Trade-off: No replay protection, but acceptable for fund recovery
-        val vValue = 27 + recoveryId
-        val vBigInt = BigInteger.valueOf(vValue.toLong())
+        // For Unichain (chainId = 130):
+        // v = 130 * 2 + 35 + recoveryId = 295 + recoveryId
+        // So v will be 295 (if recoveryId=0) or 296 (if recoveryId=1)
+        val chainId = NetworkConstants.CHAIN_ID
+        val vValue = chainId * 2 + 35 + recoveryId
+        val vBigInt = BigInteger.valueOf(vValue)
 
-        Timber.d("Calculated v (legacy): $vValue (0x${vValue.toString(16)})")
+        Timber.d("Calculated v (EIP-155): $vValue (chainId=$chainId, recoveryId=$recoveryId)")
 
         // Convert signature components to BigInteger
         val rBigInt = BigInteger(1, r)

@@ -51,52 +51,76 @@ app/src/main/java/com/example/tangemunichainhelper/
 
 ---
 
-## The Tangem Hack Explained
+## How Tangem Signing Works with Unichain
 
 ### The Problem
 
-Tangem SDK is configured for specific chains (Ethereum, etc.) and doesn't support Unichain (Chain ID: 130). When you ask Tangem to sign a transaction, it expects to sign for a known chain.
+Tangem SDK is configured for specific chains (Ethereum, etc.) and doesn't officially support Unichain (Chain ID: 130). The official Tangem app can't sign Unichain transactions.
 
-### The Solution: Legacy Transaction Format
+### The Solution: EIP-155 Transactions
 
-We use **legacy transaction format** (pre-EIP-155) which is chain-agnostic:
+The key insight is that **Tangem cards don't care about chains** — they just sign whatever 32-byte hash you give them. We leverage this to create proper EIP-155 replay-protected transactions:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    HOW THE HACK WORKS                           │
+│              HOW TANGEM SIGNS UNICHAIN TRANSACTIONS             │
 ├─────────────────────────────────────────────────────────────────┤
 │ 1. Create transaction data (nonce, gasPrice, to, value, data)   │
 │                                                                 │
-│ 2. Hash with LEGACY format (no chain ID):                       │
-│    hash = keccak256(rlp(nonce,gasPrice,gasLimit,to,value,data)) │
+│ 2. Hash with EIP-155 format (includes chain ID):                │
+│    hash = keccak256(rlp(nonce,gasPrice,gasLimit,to,value,       │
+│                         data,chainId,0,0))                      │
+│    For Unichain: chainId = 130                                  │
 │                                                                 │
-│ 3. Tangem signs the hash (card doesn't know which chain)        │
+│ 3. Tangem signs the hash (card just signs 32 bytes)             │
 │    → Returns 64-byte signature (r, s)                           │
 │                                                                 │
 │ 4. Find correct recovery ID (0 or 1) by trying both             │
 │    → Test which one recovers the correct public key             │
 │                                                                 │
-│ 5. Broadcast with LEGACY v value:                               │
-│    v = 27 + recoveryId  (NOT chainId*2+35!)                     │
+│ 5. Encode with EIP-155 v value:                                 │
+│    v = chainId * 2 + 35 + recoveryId                            │
+│    For Unichain: v = 130 * 2 + 35 + recoveryId = 295 or 296     │
 │                                                                 │
-│ 6. Transaction is valid on ANY EVM chain (including Unichain)   │
+│ 6. Broadcast to Unichain RPC                                    │
+│    → Transaction is replay-protected for chain 130              │
 ├─────────────────────────────────────────────────────────────────┤
-│ Trade-off: No replay protection (same tx valid on other chains) │
-│ Acceptable for: Fund recovery from unsupported chains           │
+│ ✅ Replay Protection: Transaction only valid on Unichain        │
+│ ✅ Works with any EVM chain by changing CHAIN_ID                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Code Location
+### Key Code Locations
 
-The v value calculation is in `MainViewModel.kt`:
-
+**Hash Generation** (`Web3Manager.kt`):
 ```kotlin
-// CRITICAL: Since we sign with LEGACY hash format (no chain ID in hash),
-// we MUST use legacy v value (27 or 28), NOT EIP-155 v value.
-val vValue = 27 + recoveryId
+fun getTransactionHashForTangemSigning(rawTransaction: RawTransaction): ByteArray {
+    // Encode WITH chain ID (EIP-155 format)
+    val encoded = TransactionEncoder.encode(rawTransaction, NetworkConstants.CHAIN_ID)
+    return Hash.sha3(encoded)
+}
 ```
 
-**DO NOT CHANGE THIS** to use EIP-155 format (`chainId * 2 + 35`) unless you also change the hash format.
+**v Value Calculation** (`MainViewModel.kt`):
+```kotlin
+// EIP-155 v value: chainId * 2 + 35 + recoveryId
+val chainId = NetworkConstants.CHAIN_ID  // 130 for Unichain
+val vValue = chainId * 2 + 35 + recoveryId  // 295 or 296
+```
+
+### Why This Works
+
+The Tangem card's secure element:
+- Receives a 32-byte hash
+- Signs it with the private key
+- Returns 64 bytes (r, s)
+
+It has **no knowledge of**:
+- Which blockchain the transaction is for
+- What chain ID is embedded in the hash
+- Whether it's EIP-155 or legacy format
+
+This means you can sign for **any EVM chain** by simply including that chain's ID in the hash.
 
 ---
 
@@ -194,9 +218,9 @@ val USDC = Token.ERC20(
 )
 ```
 
-### Note on the Hack
+### Note on Chain Support
 
-The legacy transaction format works on **any EVM chain**, so the signing logic doesn't need to change. Only the RPC URL and contract addresses need updating.
+The EIP-155 signing works on **any EVM chain** — just change the `CHAIN_ID` in `NetworkConstants.kt`. The signing logic automatically adapts. Only the RPC URL and contract addresses need updating for each chain.
 
 ---
 
@@ -231,7 +255,7 @@ Handles all blockchain operations:
 | `getAllTokenBalances(address)` | Get all token balances |
 | `estimateGasForTransfer(...)` | Estimate gas for any transfer |
 | `createTransferTransaction(...)` | Create unsigned transaction |
-| `getTransactionHashForTangemSigning(tx)` | Get legacy hash for signing |
+| `getTransactionHashForTangemSigning(tx)` | Get EIP-155 hash for signing |
 | `sendSignedTransaction(signedTx)` | Broadcast to network |
 
 ### MainViewModel.kt
@@ -295,7 +319,7 @@ Address validation:
 │     └─► For ERC-20: RawTransaction with encoded transfer()       │
 │                                                                  │
 │  5. Generate Hash (getTransactionHashForTangemSigning)           │
-│     └─► LEGACY format: keccak256(rlp(nonce,...,data))            │
+│     └─► EIP-155 format: keccak256(rlp(nonce,...,data,chainId,0,0))│
 │                                                                  │
 │  6. Sign with Tangem (signTransactionHash)                       │
 │     ├─► User taps NFC card                                       │
@@ -308,7 +332,7 @@ Address validation:
 │     └─► Return ID that matches expected public key               │
 │                                                                  │
 │  8. Encode Signed Transaction                                    │
-│     └─► RLP encode with v = 27 + recoveryId (LEGACY)             │
+│     └─► RLP encode with v = chainId*2 + 35 + recoveryId (EIP-155)│
 │                                                                  │
 │  9. Broadcast (sendSignedTransaction)                            │
 │     └─► eth_sendRawTransaction to Unichain RPC                   │
@@ -337,18 +361,16 @@ Address validation:
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
-| Replay Protection | ⚠️ None | Legacy tx valid on any chain |
+| Replay Protection | ✅ Good | EIP-155 transactions are chain-specific |
 | RPC Security | ⚠️ Basic | Uses HTTPS but no cert pinning |
 | Logging | ⚠️ Verbose | Disable in production |
 
-### Replay Attack Risk
+### Replay Protection
 
-Since we use legacy transactions, the same signed transaction could theoretically be replayed on other EVM chains if:
-1. The sender has funds on another chain
-2. The nonce matches
-3. The recipient address exists on that chain
-
-**Mitigation**: This app is designed for **fund recovery**, not daily use. Users should transfer all funds in one go.
+We use **EIP-155 transactions** which include the chain ID in the signed hash. This means:
+- Transactions signed for Unichain (chain ID 130) are **only valid on Unichain**
+- They cannot be replayed on Ethereum, Polygon, or any other chain
+- The v value encodes the chain ID, making the signature chain-specific
 
 ---
 
@@ -380,9 +402,19 @@ Since we use legacy transactions, the same signed transaction could theoreticall
 
 ### Transaction Fails with "Invalid Sender"
 
-**Cause**: v value mismatch between signing and verification.
+**Cause**: v value or hash format mismatch.
 
-**Solution**: Ensure `vValue = 27 + recoveryId` (legacy format), NOT `chainId * 2 + 35`.
+**Solution**: Ensure both are using EIP-155 format:
+- Hash: `TransactionEncoder.encode(rawTransaction, CHAIN_ID)`
+- v value: `chainId * 2 + 35 + recoveryId` (295 or 296 for Unichain)
+
+### Transaction Fails with "only replay-protected transactions allowed"
+
+**Cause**: Using legacy format instead of EIP-155.
+
+**Solution**: The RPC requires EIP-155 transactions. Ensure:
+- Hash includes chain ID
+- v value uses EIP-155 formula (not legacy 27/28)
 
 ### Transaction Fails with "Insufficient Funds"
 

@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
+## [1.0.2] - 2024-12-19
+
+### Added
+- Added USDT (Tether USD) token support
+  - Contract: `0x9151434b16b9763660705744891fa906f660ecc5`
+  - Uses USDT0 (omnichain Tether via LayerZero)
+
+### Fixed
+- Fixed "only replay-protected (EIP-155) transactions allowed" error
+- Transactions now use proper EIP-155 format with chain ID
+
+### Changed
+- Transaction hash now includes chain ID (EIP-155 compliant)
+- v value calculation updated: `chainId * 2 + 35 + recoveryId`
+- Updated documentation to reflect EIP-155 signing process
+
+### Security
+- Added replay protection - transactions are now chain-specific
+- Signed transactions for Unichain cannot be replayed on other chains
+
 ## [1.0.1] - 2024-12-19
 
 ### Fixed

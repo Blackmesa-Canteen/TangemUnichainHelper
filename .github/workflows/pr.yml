@@ -1,0 +1,225 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
+
+jobs:
+  # ============================================================================
+  # Security Checks
+  # ============================================================================
+
+  secret-detection:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java-kotlin
+          queries: security-extended
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build for CodeQL analysis
+        run: ./gradlew compileDebugKotlin --no-daemon
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:java-kotlin"
+
+  # ============================================================================
+  # Tests
+  # ============================================================================
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Clear Gradle transform cache
+        run: rm -rf ~/.gradle/caches/*/transforms
+
+      - name: Run unit tests
+        run: ./gradlew test --stacktrace
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          retention-days: 7
+
+      - name: Test Report Summary
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: JUnit Test Results
+          path: app/build/test-results/**/*.xml
+          reporter: java-junit
+          fail-on-error: true
+
+  # ============================================================================
+  # Build Verification
+  # ============================================================================
+
+  build-debug:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    needs: [unit-tests]  # Only build if tests pass
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-pr-${{ github.event.pull_request.number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+  # ============================================================================
+  # Code Quality
+  # ============================================================================
+
+  lint:
+    name: Android Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Android Lint
+        run: ./gradlew lint --stacktrace
+
+      - name: Upload lint results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-results
+          path: app/build/reports/lint-results*.html
+          retention-days: 7
+
+  # ============================================================================
+  # PR Status Check (Final Gate)
+  # ============================================================================
+
+  pr-status:
+    name: PR Ready
+    runs-on: ubuntu-latest
+    needs: [secret-detection, codeql, unit-tests, build-debug, lint]
+    if: always()
+    steps:
+      - name: Check all jobs status
+        run: |
+          echo "Secret Detection: ${{ needs.secret-detection.result }}"
+          echo "CodeQL: ${{ needs.codeql.result }}"
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Build: ${{ needs.build-debug.result }}"
+          echo "Lint: ${{ needs.lint.result }}"
+
+          if [[ "${{ needs.secret-detection.result }}" == "failure" ]]; then
+            echo "::error::Secret detection failed - potential secrets found in code!"
+            exit 1
+          fi
+
+          if [[ "${{ needs.codeql.result }}" == "failure" ]]; then
+            echo "::error::CodeQL security analysis found issues!"
+            exit 1
+          fi
+
+          if [[ "${{ needs.unit-tests.result }}" == "failure" ]]; then
+            echo "::error::Unit tests failed!"
+            exit 1
+          fi
+
+          if [[ "${{ needs.build-debug.result }}" == "failure" ]]; then
+            echo "::error::Debug build failed!"
+            exit 1
+          fi
+
+          # Lint is non-blocking but we report it
+          if [[ "${{ needs.lint.result }}" == "failure" ]]; then
+            echo "::warning::Lint check failed - please review lint warnings"
+          fi
+
+          echo "✅ All required checks passed!"

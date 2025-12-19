@@ -92,8 +92,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
 
     // Tangem SDK (3.9.2 adds support for newer card firmware curves)
-    implementation("com.github.tangem.tangem-sdk-android:android:3.9.2")
-    implementation("com.github.tangem.tangem-sdk-android:core:3.9.2")
+    // Note: Use capital 'Tangem' - JitPack is case-sensitive
+    implementation("com.github.Tangem.tangem-sdk-android:android:3.9.2")
+    implementation("com.github.Tangem.tangem-sdk-android:core:3.9.2")
 
     // web3j
     implementation("org.web3j:core:5.0.1")

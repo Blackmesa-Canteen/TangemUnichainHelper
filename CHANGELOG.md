@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed "only replay-protected (EIP-155) transactions allowed" error
 - Transactions now use proper EIP-155 format with chain ID
+- Fixed Tangem SDK JitPack dependency casing (JitPack is case-sensitive)
 
 ### Changed
 - Transaction hash now includes chain ID (EIP-155 compliant)

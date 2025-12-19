@@ -200,7 +200,7 @@ This means the transaction signature is invalid. If you modified the code, ensur
 
 ### Dependencies
 
-- Tangem SDK 3.9.2
+- Tangem SDK 3.8.2
 - Web3j 5.0.1
 - Jetpack Compose + Material 3
 - Kotlin Coroutines 1.6.4

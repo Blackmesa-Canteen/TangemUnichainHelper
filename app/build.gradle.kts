@@ -91,9 +91,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
 
-    // Tangem SDK
-    implementation("com.github.tangem.tangem-sdk-android:android:3.9.2")
-    implementation("com.github.tangem.tangem-sdk-android:core:3.9.2")
+    // Tangem SDK (3.8.2 is the latest version with stable JitPack builds)
+    implementation("com.github.tangem.tangem-sdk-android:android:3.8.2")
+    implementation("com.github.tangem.tangem-sdk-android:core:3.8.2")
 
     // web3j
     implementation("org.web3j:core:5.0.1")

@@ -10,7 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
-## [1.1.0] - 2024-12-19
+## [1.1.1] - 2025-12-19
+
+### Added
+- Custom app icon (chain link with upward arrow representing "chain rescue")
+  - Purple-blue gradient background (crypto/blockchain themed)
+  - White foreground with chain links and rescue arrow
+
+### Changed
+- Updated documentation for multi-chain consistency
+
+## [1.1.0] - 2025-12-19
 
 ### Added
 - **Multi-chain architecture** - Extensible support for any EVM chain
@@ -52,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UI dynamically shows tokens available for selected chain
 - 159 unit tests (added Chain and TokenContractRegistry tests)
 
-## [1.0.2] - 2024-12-19
+## [1.0.2] - 2025-12-19
 
 ### Added
 - Added USDT (Tether USD) token support
@@ -73,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added replay protection - transactions are now chain-specific
 - Signed transactions for Unichain cannot be replayed on other chains
 
-## [1.0.1] - 2024-12-19
+## [1.0.1] - 2025-12-19
 
 ### Fixed
 - Fixed "Failed to convert CurveId to EllipticCurve" error when scanning newer Tangem cards
@@ -91,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fallback RPC: `https://mainnet.unichain.org`
 - CI/CD workflows updated with proper memory settings
 
-## [1.0.0] - 2024-12-19
+## [1.0.0] - 2025-12-19
 
 ### Added
 - Initial release

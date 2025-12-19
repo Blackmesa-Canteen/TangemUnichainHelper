@@ -546,4 +546,4 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) for deta
 
 ---
 
-*Last updated: December 2024*
+*Last updated: December 2025*

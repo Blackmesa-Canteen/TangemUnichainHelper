@@ -2,7 +2,7 @@
 
 **Project:** Tangem Unichain Helper
 **Version:** 1.1.0
-**Audit Date:** 2024-12-19
+**Audit Date:** 2025-12-19
 **Auditor:** Claude (Anthropic AI Assistant)
 **Status:** ✅ PASSED (with 1 fix applied)
 
@@ -319,6 +319,6 @@ app/src/main/java/com/example/tangemunichainhelper/
 
 ---
 
-**Report Generated:** 2024-12-19
+**Report Generated:** 2025-12-19
 **Auditor:** Claude (Anthropic AI Assistant)
 **Next Audit Recommended:** Before each major release

@@ -37,12 +37,11 @@ The official Tangem app doesn't support Unichain. If you have funds stuck on Uni
 - Transaction details shown before signing
 - Open source — audit the code yourself
 
-## Screenshots
+## Screenshot
 
-<!-- Add screenshots here -->
-| Scan Card | View Balance | Send Transaction |
-|:---------:|:------------:|:----------------:|
-| <!-- screenshot --> | <!-- screenshot --> | <!-- screenshot --> |
+<p align="center">
+  <img src="assets/app-screenshot.jpg" alt="Tangem Unichain Helper App" width="300">
+</p>
 
 ## Quick Start
 

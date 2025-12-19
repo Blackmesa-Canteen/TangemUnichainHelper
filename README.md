@@ -9,6 +9,8 @@
 
 An Android app that enables **Tangem NFC card** users to transfer ETH and ERC-20 tokens on **Unichain** (Chain ID: 130) — a network not officially supported by the Tangem app.
 
+> **Multi-Chain Architecture**: This app supports extensible multi-chain EVM compatibility. While Unichain is the default and only shipped mainnet, developers can easily add support for any EVM chain. See [DEVELOPER.md](DEVELOPER.md) for instructions.
+
 ## Download
 
 **[Download the latest APK from Releases](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/releases/latest)**
@@ -103,24 +105,26 @@ This creates a **replay-protected** transaction that's valid only on Unichain. S
 
 ## Adding New Tokens
 
-Adding a token takes 2 lines of code:
+Adding a token takes 2 steps:
 
 ```kotlin
-// In app/src/main/java/.../core/Token.kt
-
-// 1. Define the token
-val USDT = Token.ERC20(
-    symbol = "USDT",
-    name = "Tether USD",
-    contractAddress = "0x...",  // Find on uniscan.xyz
-    decimals = 6
+// 1. In Token.kt - Define the token (chain-agnostic)
+val WETH = Token.ERC20(
+    symbol = "WETH",
+    name = "Wrapped Ether",
+    decimals = 18
 )
+// Add to: val allTokens = listOf(Native, USDC, USDT, WETH)
 
-// 2. Add to list
-val allTokens = listOf(ETH, USDC, USDT)
+// 2. In TokenContractRegistry.kt - Add contract address per chain
+130L to mapOf(
+    "USDC" to "0x078D782b...",
+    "USDT" to "0x9151434b...",
+    "WETH" to "0x..."  // Your token's Unichain address
+)
 ```
 
-See [DEVELOPER.md](DEVELOPER.md) for detailed instructions.
+See [DEVELOPER.md](DEVELOPER.md) for detailed instructions on adding tokens and chains.
 
 ## Configuration
 
@@ -147,17 +151,19 @@ object NetworkConstants {
 ```
 app/src/main/java/com/example/tangemunichainhelper/
 ├── core/
-│   ├── AddressUtils.kt      # EIP-55 address validation
-│   ├── GasUtils.kt          # Gas formatting
-│   ├── NetworkConstants.kt  # Network config
-│   ├── TangemManager.kt     # Tangem SDK wrapper
-│   ├── Token.kt             # Token abstraction
-│   └── Web3Manager.kt       # Blockchain operations
+│   ├── AddressUtils.kt          # EIP-55 address validation
+│   ├── Chain.kt                 # Chain sealed class + ChainRegistry
+│   ├── GasUtils.kt              # Gas formatting
+│   ├── NetworkConstants.kt      # (Deprecated) Legacy config
+│   ├── TangemManager.kt         # Tangem SDK wrapper
+│   ├── Token.kt                 # Token sealed class + TokenRegistry
+│   ├── TokenContractRegistry.kt # Chain-specific token addresses
+│   └── Web3Manager.kt           # Chain-aware blockchain operations
 ├── ui/
-│   ├── MainViewModel.kt     # State management
-│   └── theme/Theme.kt       # Material theme
-├── MainActivity.kt          # Compose UI
-└── TangemUnichainApp.kt     # Application class
+│   ├── MainViewModel.kt         # State management with chain selection
+│   └── theme/Theme.kt           # Material theme
+├── MainActivity.kt              # Compose UI with ChainSelector
+└── TangemUnichainApp.kt         # Application class
 ```
 
 ## Troubleshooting

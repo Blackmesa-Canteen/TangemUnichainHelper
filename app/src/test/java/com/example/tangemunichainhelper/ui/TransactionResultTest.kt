@@ -1,6 +1,6 @@
 package com.example.tangemunichainhelper.ui
 
-import com.example.tangemunichainhelper.core.NetworkConstants
+import com.example.tangemunichainhelper.core.Chain
 import org.junit.Assert.*
 import org.junit.Test
 import java.math.BigDecimal
@@ -25,7 +25,8 @@ class TransactionResultTest {
             gasPrice = BigInteger.TEN.pow(9),
             gasLimit = BigInteger.valueOf(21000),
             nonce = BigInteger.valueOf(42),
-            explorerUrl = "${NetworkConstants.EXPLORER_URL}/tx/$txHash"
+            networkName = Chain.Unichain.name,
+            explorerUrl = "${Chain.Unichain.explorerUrl}/tx/$txHash"
         )
     }
 
@@ -111,6 +112,7 @@ class TransactionResultTest {
         val gasPrice = BigInteger.valueOf(5000000000)
         val gasLimit = BigInteger.valueOf(65000)
         val nonce = BigInteger.valueOf(10)
+        val networkName = "Unichain Mainnet"
         val explorerUrl = "https://example.com/tx/0xabc123"
 
         val result = TransactionResult(
@@ -123,6 +125,7 @@ class TransactionResultTest {
             gasPrice = gasPrice,
             gasLimit = gasLimit,
             nonce = nonce,
+            networkName = networkName,
             explorerUrl = explorerUrl
         )
 
@@ -135,14 +138,15 @@ class TransactionResultTest {
         assertEquals(gasPrice, result.gasPrice)
         assertEquals(gasLimit, result.gasLimit)
         assertEquals(nonce, result.nonce)
+        assertEquals(networkName, result.networkName)
         assertEquals(explorerUrl, result.explorerUrl)
     }
 
     @Test
-    fun `result should have default network name`() {
+    fun `result should have correct network name from chain`() {
         val result = createTestResult()
 
-        assertEquals(NetworkConstants.NETWORK_NAME, result.networkName)
+        assertEquals(Chain.Unichain.name, result.networkName)
     }
 
     @Test
@@ -156,7 +160,7 @@ class TransactionResultTest {
     }
 
     @Test
-    fun `custom network name should override default`() {
+    fun `custom network name should be preserved`() {
         val result = TransactionResult(
             txHash = "0x123",
             amount = BigDecimal.ONE,
@@ -204,6 +208,7 @@ class TransactionResultTest {
             gasPrice = BigInteger.ZERO,
             gasLimit = BigInteger.ZERO,
             nonce = BigInteger.ZERO,
+            networkName = "Unichain Mainnet",
             explorerUrl = ""
         )
 
@@ -223,6 +228,7 @@ class TransactionResultTest {
             gasPrice = BigInteger.ONE,
             gasLimit = BigInteger.ONE,
             nonce = largeNonce,
+            networkName = "Unichain Mainnet",
             explorerUrl = ""
         )
 

@@ -20,9 +20,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.tangemunichainhelper.core.CardInfo
+import com.example.tangemunichainhelper.core.Chain
+import com.example.tangemunichainhelper.core.ChainRegistry
 import com.example.tangemunichainhelper.core.GasUtils
-import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
+import com.example.tangemunichainhelper.core.Token
+import com.example.tangemunichainhelper.core.TokenRegistry
 import com.example.tangemunichainhelper.ui.ErrorInfo
 import com.example.tangemunichainhelper.ui.ErrorType
 import com.example.tangemunichainhelper.ui.MainViewModel
@@ -100,6 +103,12 @@ fun MainScreen(viewModel: MainViewModel) {
                 )
             }
 
+            // Network Selection
+            ChainSelector(
+                selectedChain = uiState.selectedChain,
+                onChainSelected = { viewModel.selectChain(it) }
+            )
+
             // Card Scan Section
             CardScanSection(
                 cardInfo = uiState.cardInfo,
@@ -109,9 +118,10 @@ fun MainScreen(viewModel: MainViewModel) {
 
             // Balances Section
             if (uiState.cardInfo != null) {
-                BalancesSection(
-                    ethBalance = uiState.ethBalance.toPlainString(),
-                    usdcBalance = uiState.usdcBalance.toPlainString(),
+                BalancesSectionDynamic(
+                    chain = uiState.selectedChain,
+                    tokenBalances = uiState.tokenBalances,
+                    availableTokens = uiState.availableTokens,
                     isLoading = uiState.isLoadingBalances,
                     onRefresh = { viewModel.loadBalances() }
                 )
@@ -590,6 +600,142 @@ fun BalanceRow(symbol: String, balance: String) {
             text = balance,
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+/**
+ * Dropdown menu for selecting the blockchain network.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChainSelector(
+    selectedChain: Chain,
+    onChainSelected: (Chain) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Network",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = selectedChain.name,
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth(),
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                )
+
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    ChainRegistry.allChains.forEach { chain ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(chain.name)
+                                    if (chain.isTestnet) {
+                                        Text(
+                                            text = "(Testnet)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = {
+                                onChainSelected(chain)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Show chain info
+            Text(
+                text = "Chain ID: ${selectedChain.chainId} • ${selectedChain.nativeCurrencySymbol}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * Dynamic balances section that shows available tokens based on the selected chain.
+ */
+@Composable
+fun BalancesSectionDynamic(
+    chain: Chain,
+    tokenBalances: Map<String, java.math.BigDecimal>,
+    availableTokens: List<Token>,
+    isLoading: Boolean,
+    onRefresh: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Balances",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading
+                ) {
+                    Text("🔄", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else {
+                availableTokens.forEach { token ->
+                    val balance = tokenBalances[token.symbol] ?: java.math.BigDecimal.ZERO
+                    val displaySymbol = if (token is Token.Native) {
+                        chain.nativeCurrencySymbol
+                    } else {
+                        token.symbol
+                    }
+                    BalanceRow(displaySymbol, balance.stripTrailingZeros().toPlainString())
+                }
+
+                if (availableTokens.isEmpty()) {
+                    Text(
+                        text = "No tokens configured for ${chain.shortName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 

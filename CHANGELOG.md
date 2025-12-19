@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
+## [1.1.0] - 2024-12-19
+
+### Added
+- **Multi-chain architecture** - Extensible support for any EVM chain
+  - `Chain` sealed class with `Unichain`, `Sepolia`, and `Custom` types
+  - `ChainRegistry` for managing available chains
+  - `TokenContractRegistry` for chain-specific token contract addresses
+  - Chain selector dropdown in UI
+- Sepolia testnet support for development and testing
+- Chain-aware transaction signing with dynamic chain ID
+- `switchChain()` method for runtime chain switching
+- Comprehensive unit tests for Chain and TokenContractRegistry
+
+### Changed
+- **Breaking**: `Token.ETH` renamed to `Token.Native` (deprecated alias available)
+- **Breaking**: `Token.ERC20` no longer includes `contractAddress` (moved to `TokenContractRegistry`)
+- Web3Manager now accepts `Chain` parameter and manages chain state
+- MainViewModel includes `selectedChain` state and `selectChain()` method
+- Transaction encoding uses chain-specific chain ID for EIP-155
+- Explorer URLs now dynamically generated from chain configuration
+- Updated documentation with multi-chain extension guides
+
+### Deprecated
+- `NetworkConstants.kt` - Use `Chain` properties instead
+- `Token.ETH` - Use `Token.Native` instead
+- `TokenRegistry.ETH` - Use `TokenRegistry.Native` instead
+
+### Security
+- GitHub Actions security scanning workflow added:
+  - Gitleaks for secret detection
+  - CodeQL SAST (Static Application Security Testing) for Java/Kotlin
+  - Dependency vulnerability checking
+  - Android Lint security checks
+- Fixed Timber logging to only enable in debug builds
+  - Prevents sensitive transaction data from being logged in production
+
+### Technical
+- Token definitions are now chain-agnostic (no contract addresses)
+- Contract addresses managed per-chain in `TokenContractRegistry`
+- UI dynamically shows tokens available for selected chain
+- 159 unit tests (added Chain and TokenContractRegistry tests)
+
 ## [1.0.2] - 2024-12-19
 
 ### Added

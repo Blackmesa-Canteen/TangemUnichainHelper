@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.tangemunichainhelper.core.AddressUtils
 import com.example.tangemunichainhelper.core.CardInfo
-import com.example.tangemunichainhelper.core.NetworkConstants
+import com.example.tangemunichainhelper.core.Chain
+import com.example.tangemunichainhelper.core.ChainRegistry
 import com.example.tangemunichainhelper.core.TangemManager
 import com.example.tangemunichainhelper.core.Token
+import com.example.tangemunichainhelper.core.TokenContractRegistry
 import com.example.tangemunichainhelper.core.TokenRegistry
 import com.example.tangemunichainhelper.core.Web3Manager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -157,8 +159,8 @@ class MainViewModel : ViewModel() {
             val tokenBalance = state.getBalance(token)
 
             when (token) {
-                is Token.ETH -> {
-                    // For ETH: return balance minus gas cost
+                is Token.Native -> {
+                    // For native currency (ETH): return balance minus gas cost
                     val maxEth = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
                     Result.success(
                         MaxTransferInfo(
@@ -192,7 +194,7 @@ class MainViewModel : ViewModel() {
 
     // Backward compatibility wrapper
     suspend fun calculateMaxTransferAmount(isUsdc: Boolean): Result<MaxTransferInfo> {
-        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.ETH
+        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.Native
         return calculateMaxTransferAmount(token)
     }
 
@@ -306,28 +308,29 @@ class MainViewModel : ViewModel() {
 
                 // Validate sufficient balance
                 val ethBalance = _uiState.value.ethBalance
+                val chain = web3Manager.currentChain
                 when (token) {
-                    is Token.ETH -> {
-                        // For ETH: need amount + gas
+                    is Token.Native -> {
+                        // For native currency: need amount + gas
                         val totalNeeded = amountDecimal + gasCostEth
                         if (ethBalance < totalNeeded) {
                             val maxSendable = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
-                                    error = "Insufficient ETH. You need ${totalNeeded.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH (amount + gas), but have ${ethBalance.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH. Max sendable: ${maxSendable.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ETH"
+                                    error = "Insufficient ${chain.nativeCurrencySymbol}. You need ${totalNeeded.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ${chain.nativeCurrencySymbol} (amount + gas), but have ${ethBalance.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ${chain.nativeCurrencySymbol}. Max sendable: ${maxSendable.setScale(8, RoundingMode.DOWN).stripTrailingZeros().toPlainString()} ${chain.nativeCurrencySymbol}"
                                 )
                             }
                             return@launch
                         }
                     }
                     is Token.ERC20 -> {
-                        // For ERC-20: need ETH for gas, and enough token balance
+                        // For ERC-20: need native currency for gas, and enough token balance
                         if (ethBalance < gasCostEth) {
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
-                                    error = "Insufficient ETH for gas. You need at least ${gasCostEth.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ETH for gas fees."
+                                    error = "Insufficient ${chain.nativeCurrencySymbol} for gas. You need at least ${gasCostEth.setScale(8, RoundingMode.UP).stripTrailingZeros().toPlainString()} ${chain.nativeCurrencySymbol} for gas fees."
                                 )
                             }
                             return@launch
@@ -372,7 +375,7 @@ class MainViewModel : ViewModel() {
 
     // Backward compatibility wrapper
     fun prepareTransfer(recipientAddress: String, amount: String, isUsdc: Boolean) {
-        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.ETH
+        val token = if (isUsdc) TokenRegistry.USDC else TokenRegistry.Native
         prepareTransfer(recipientAddress, amount, token)
     }
 
@@ -490,11 +493,12 @@ class MainViewModel : ViewModel() {
 
                 txHashResult.fold(
                     onSuccess = { txHash ->
+                        val chain = web3Manager.currentChain
                         Timber.d("✓ Transaction successful!")
                         Timber.d("Transaction hash: $txHash")
-                        Timber.d("View on Uniscan: ${NetworkConstants.EXPLORER_URL}/tx/$txHash")
+                        Timber.d("View on explorer: ${chain.txExplorerUrl(txHash)}")
 
-                        // Calculate gas fee in ETH
+                        // Calculate gas fee in native currency
                         val gasFeeWei = transferParams.gasPrice.multiply(transferParams.gasLimit)
                         val gasFeeEth = BigDecimal(gasFeeWei)
                             .divide(BigDecimal.TEN.pow(18), 18, RoundingMode.DOWN)
@@ -509,7 +513,8 @@ class MainViewModel : ViewModel() {
                             gasPrice = transferParams.gasPrice,
                             gasLimit = transferParams.gasLimit,
                             nonce = transferParams.nonce,
-                            explorerUrl = "${NetworkConstants.EXPLORER_URL}/tx/$txHash"
+                            networkName = chain.name,
+                            explorerUrl = chain.txExplorerUrl(txHash)
                         )
 
                         _uiState.update {
@@ -549,10 +554,11 @@ class MainViewModel : ViewModel() {
         signature: ByteArray,
         recoveryId: Int
     ): ByteArray {
+        val chainId = web3Manager.currentChain.chainId
         Timber.d("Encoding signed transaction...")
         Timber.d("Signature length: ${signature.size}")
         Timber.d("Recovery ID: $recoveryId")
-        Timber.d("Chain ID: ${NetworkConstants.CHAIN_ID}")
+        Timber.d("Chain ID: $chainId")
 
         require(signature.size == 64) { "Expected 64-byte signature, got ${signature.size}" }
 
@@ -568,7 +574,6 @@ class MainViewModel : ViewModel() {
         // For Unichain (chainId = 130):
         // v = 130 * 2 + 35 + recoveryId = 295 + recoveryId
         // So v will be 295 (if recoveryId=0) or 296 (if recoveryId=1)
-        val chainId = NetworkConstants.CHAIN_ID
         val vValue = chainId * 2 + 35 + recoveryId
         val vBigInt = BigInteger.valueOf(vValue)
 
@@ -748,12 +753,49 @@ class MainViewModel : ViewModel() {
     fun cancelTransfer() {
         _uiState.update { it.copy(transferParams = null) }
     }
+
+    /**
+     * Switch to a different blockchain network.
+     *
+     * This will:
+     * 1. Update the Web3Manager to use the new chain's RPC
+     * 2. Clear cached balances
+     * 3. Reload balances for the new chain
+     *
+     * @param chain The blockchain network to switch to
+     */
+    fun selectChain(chain: Chain) {
+        if (chain.chainId == _uiState.value.selectedChain.chainId) {
+            return  // Already on this chain
+        }
+
+        Timber.d("Switching chain from ${_uiState.value.selectedChain.name} to ${chain.name}")
+
+        // Switch the Web3Manager to use the new chain
+        web3Manager.switchChain(chain)
+
+        // Update UI state: set new chain and clear balances
+        _uiState.update {
+            it.copy(
+                selectedChain = chain,
+                tokenBalances = emptyMap(),
+                transferParams = null  // Clear any pending transfer
+            )
+        }
+
+        // Reload balances for the new chain if card is scanned
+        if (currentCardInfo != null) {
+            loadBalances()
+        }
+    }
 }
 
 data class UiState(
     val isLoading: Boolean = false,
     val isLoadingBalances: Boolean = false,
     val cardInfo: CardInfo? = null,
+    /** Currently selected blockchain network. */
+    val selectedChain: Chain = ChainRegistry.default,
     /** Map of token symbol to balance. Use getBalance(token) helper. */
     val tokenBalances: Map<String, BigDecimal> = emptyMap(),
     val transferParams: TransferParams? = null,
@@ -764,14 +806,20 @@ data class UiState(
     /** Get balance for a specific token. Returns ZERO if not loaded. */
     fun getBalance(token: Token): BigDecimal = tokenBalances[token.symbol] ?: BigDecimal.ZERO
 
-    /** Shortcut for ETH balance. */
-    val ethBalance: BigDecimal get() = getBalance(TokenRegistry.ETH)
+    /** Shortcut for native currency balance (ETH on most chains). */
+    val ethBalance: BigDecimal get() = getBalance(TokenRegistry.Native)
 
     /** Shortcut for USDC balance (for backward compatibility). */
     val usdcBalance: BigDecimal get() = getBalance(TokenRegistry.USDC)
 
     /** For backward compatibility - returns just the hash. */
     val lastTransactionHash: String? get() = lastTransactionResult?.txHash
+
+    /** Native currency symbol for the selected chain (e.g., "ETH"). */
+    val nativeCurrencySymbol: String get() = selectedChain.nativeCurrencySymbol
+
+    /** Tokens available on the selected chain. */
+    val availableTokens: List<Token> get() = TokenContractRegistry.getTokensForChain(selectedChain)
 }
 
 data class TransferParams(
@@ -927,7 +975,7 @@ data class TransactionResult(
     val gasPrice: BigInteger,
     val gasLimit: BigInteger,
     val nonce: BigInteger,
-    val networkName: String = NetworkConstants.NETWORK_NAME,
+    val networkName: String,
     val explorerUrl: String,
     val timestamp: Long = System.currentTimeMillis()
 ) {

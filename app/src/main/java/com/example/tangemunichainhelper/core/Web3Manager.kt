@@ -24,21 +24,50 @@ import java.math.BigInteger
 import java.math.RoundingMode
 
 /**
- * Manages all Web3/blockchain interactions.
+ * Manages all Web3/blockchain interactions for a specific chain.
  *
- * This class provides methods for:
- * - Querying balances (ETH and any ERC-20 token)
- * - Creating transactions
- * - Estimating gas
- * - Broadcasting signed transactions
+ * ## Multi-Chain Design
+ * - Each Web3Manager instance is bound to a specific [Chain]
+ * - Call [switchChain] to change to a different network
+ * - Contract addresses are resolved via [TokenContractRegistry]
+ * - Uses [Chain.chainId] for EIP-155 transaction signing
+ *
+ * @param initialChain The blockchain network to connect to (default: [ChainRegistry.default])
  */
-class Web3Manager {
-    private val web3j: Web3j = Web3j.build(HttpService(NetworkConstants.RPC_URL))
+class Web3Manager(initialChain: Chain = ChainRegistry.default) {
+
+    private var _chain: Chain = initialChain
+    private var web3j: Web3j = createWeb3jInstance(_chain)
+
+    /** Current chain this manager is connected to */
+    val currentChain: Chain get() = _chain
 
     /**
-     * Get ETH balance for an address
+     * Switch to a different blockchain network.
+     * Creates a new Web3j connection to the new chain's RPC.
+     *
+     * @param newChain The chain to switch to
      */
-    suspend fun getEthBalance(address: String): Result<BigDecimal> = withContext(Dispatchers.IO) {
+    fun switchChain(newChain: Chain) {
+        if (newChain.chainId != _chain.chainId) {
+            Timber.d("Switching from ${_chain.shortName} to ${newChain.shortName}")
+            _chain = newChain
+            web3j = createWeb3jInstance(newChain)
+        }
+    }
+
+    private fun createWeb3jInstance(chain: Chain): Web3j {
+        return Web3j.build(HttpService(chain.primaryRpcUrl))
+    }
+
+    // =========================================================================
+    // NATIVE CURRENCY (ETH) METHODS
+    // =========================================================================
+
+    /**
+     * Get native currency balance for an address.
+     */
+    suspend fun getNativeBalance(address: String): Result<BigDecimal> = withContext(Dispatchers.IO) {
         try {
             val ethBalance = web3j.ethGetBalance(
                 address,
@@ -48,81 +77,41 @@ class Web3Manager {
             val balanceInWei = ethBalance.balance
             val balanceInEth = Convert.fromWei(balanceInWei.toBigDecimal(), Convert.Unit.ETHER)
 
-            Timber.d("ETH Balance: $balanceInEth ETH")
+            Timber.d("${_chain.nativeCurrencySymbol} Balance on ${_chain.shortName}: $balanceInEth")
             Result.success(balanceInEth)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to get ETH balance")
+            Timber.e(e, "Failed to get ${_chain.nativeCurrencySymbol} balance on ${_chain.shortName}")
             Result.failure(e)
         }
     }
 
     /**
-     * Get USDC balance for an address
+     * Get ETH balance for an address (alias for [getNativeBalance]).
+     * @deprecated Use [getNativeBalance] for multi-chain compatibility
      */
-    suspend fun getUsdcBalance(address: String): Result<BigDecimal> = withContext(Dispatchers.IO) {
-        try {
-            // Create balanceOf function call
-            val function = Function(
-                "balanceOf",
-                listOf(Address(address)),
-                listOf(object : TypeReference<Uint256>() {})
-            )
+    @Deprecated("Use getNativeBalance for multi-chain compatibility", ReplaceWith("getNativeBalance(address)"))
+    suspend fun getEthBalance(address: String): Result<BigDecimal> = getNativeBalance(address)
 
-            val encodedFunction = FunctionEncoder.encode(function)
-
-            // Call the contract
-            val response = web3j.ethCall(
-                Transaction.createEthCallTransaction(
-                    address,
-                    NetworkConstants.USDC_CONTRACT_ADDRESS,
-                    encodedFunction
-                ),
-                DefaultBlockParameterName.LATEST
-            ).send()
-
-            if (response.hasError()) {
-                throw Exception("Error calling USDC contract: ${response.error.message}")
-            }
-
-            // Decode the response
-            val returnValues = FunctionReturnDecoder.decode(
-                response.value,
-                function.outputParameters
-            )
-
-            if (returnValues.isEmpty()) {
-                throw Exception("Empty response from USDC contract")
-            }
-
-            val balanceInSmallestUnit = (returnValues[0] as Uint256).value
-            // USDC has 6 decimals
-            val balanceInUsdc = BigDecimal(balanceInSmallestUnit)
-                .divide(BigDecimal.TEN.pow(6), 6, RoundingMode.DOWN)
-
-            Timber.d("USDC Balance: $balanceInUsdc USDC")
-            Result.success(balanceInUsdc)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to get USDC balance")
-            Result.failure(e)
-        }
-    }
+    // =========================================================================
+    // GAS METHODS
+    // =========================================================================
 
     /**
-     * Get current gas price
+     * Get current gas price.
      */
     suspend fun getGasPrice(): Result<BigInteger> = withContext(Dispatchers.IO) {
         try {
             val gasPrice = web3j.ethGasPrice().send().gasPrice
-            Timber.d("Current gas price: $gasPrice wei")
+            Timber.d("Current gas price on ${_chain.shortName}: $gasPrice wei")
             Result.success(gasPrice)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to get gas price")
+            Timber.e(e, "Failed to get gas price on ${_chain.shortName}")
             Result.failure(e)
         }
     }
 
     /**
-     * Get nonce for an address
+     * Get nonce for an address.
      */
     suspend fun getNonce(address: String): Result<BigInteger> = withContext(Dispatchers.IO) {
         try {
@@ -131,18 +120,18 @@ class Web3Manager {
                 DefaultBlockParameterName.PENDING
             ).send().transactionCount
 
-            Timber.d("Nonce for $address: $nonce")
+            Timber.d("Nonce for $address on ${_chain.shortName}: $nonce")
             Result.success(nonce)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to get nonce")
+            Timber.e(e, "Failed to get nonce on ${_chain.shortName}")
             Result.failure(e)
         }
     }
 
     /**
-     * Estimate gas for ETH transfer
+     * Estimate gas for native currency transfer.
      */
-    suspend fun estimateGasForEthTransfer(
+    suspend fun estimateGasForNativeTransfer(
         from: String,
         to: String,
         amount: BigInteger
@@ -164,73 +153,41 @@ class Web3Manager {
             }
 
             val estimatedGas = gasEstimate.amountUsed
-            // Add 20% buffer to prevent out-of-gas failures
             val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
-            Timber.d("Estimated gas for ETH transfer: $estimatedGas (with buffer: $bufferedGas)")
+            Timber.d("Estimated gas for ${_chain.nativeCurrencySymbol} transfer: $estimatedGas (with buffer: $bufferedGas)")
             Result.success(bufferedGas)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to estimate gas for ETH transfer")
-            // Return default if estimation fails
-            Result.success(NetworkConstants.DEFAULT_GAS_LIMIT_ETH)
+            Timber.e(e, "Failed to estimate gas for ${_chain.nativeCurrencySymbol} transfer")
+            Result.success(Token.Native.defaultGasLimit)
         }
     }
 
     /**
-     * Estimate gas for USDC transfer
+     * @deprecated Use [estimateGasForNativeTransfer] for multi-chain compatibility
      */
-    suspend fun estimateGasForUsdcTransfer(
+    @Deprecated("Use estimateGasForNativeTransfer", ReplaceWith("estimateGasForNativeTransfer(from, to, amount)"))
+    suspend fun estimateGasForEthTransfer(
         from: String,
         to: String,
         amount: BigInteger
-    ): Result<BigInteger> = withContext(Dispatchers.IO) {
-        try {
-            val function = Function(
-                "transfer",
-                listOf(Address(to), Uint256(amount)),
-                emptyList()
-            )
+    ): Result<BigInteger> = estimateGasForNativeTransfer(from, to, amount)
 
-            val encodedFunction = FunctionEncoder.encode(function)
-
-            val transaction = Transaction.createFunctionCallTransaction(
-                from,
-                null,
-                null,
-                null,
-                NetworkConstants.USDC_CONTRACT_ADDRESS,
-                encodedFunction
-            )
-
-            val gasEstimate = web3j.ethEstimateGas(transaction).send()
-
-            if (gasEstimate.hasError()) {
-                throw Exception("Gas estimation error: ${gasEstimate.error.message}")
-            }
-
-            val estimatedGas = gasEstimate.amountUsed
-            // Add 20% buffer to prevent out-of-gas failures
-            val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
-            Timber.d("Estimated gas for USDC transfer: $estimatedGas (with buffer: $bufferedGas)")
-            Result.success(bufferedGas)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to estimate gas for USDC transfer")
-            // Return default if estimation fails
-            Result.success(NetworkConstants.DEFAULT_GAS_LIMIT_ERC20)
-        }
-    }
+    // =========================================================================
+    // TRANSACTION CREATION
+    // =========================================================================
 
     /**
-     * Create unsigned ETH transfer transaction
+     * Create unsigned native currency transfer transaction.
      */
-    suspend fun createEthTransferTransaction(
+    suspend fun createNativeTransferTransaction(
         to: String,
-        amountInEth: BigDecimal,
+        amount: BigDecimal,
         gasPrice: BigInteger,
         gasLimit: BigInteger,
         nonce: BigInteger
     ): Result<RawTransaction> = withContext(Dispatchers.IO) {
         try {
-            val amountInWei = Convert.toWei(amountInEth, Convert.Unit.ETHER).toBigInteger()
+            val amountInWei = Convert.toWei(amount, Convert.Unit.ETHER).toBigInteger()
 
             val rawTransaction = RawTransaction.createEtherTransaction(
                 nonce,
@@ -240,95 +197,70 @@ class Web3Manager {
                 amountInWei
             )
 
-            Timber.d("Created ETH transfer transaction: $amountInEth ETH to $to")
+            Timber.d("Created ${_chain.nativeCurrencySymbol} transfer: $amount to $to on ${_chain.shortName}")
             Result.success(rawTransaction)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to create ETH transfer transaction")
+            Timber.e(e, "Failed to create ${_chain.nativeCurrencySymbol} transfer transaction")
             Result.failure(e)
         }
     }
 
     /**
-     * Create unsigned USDC transfer transaction
+     * @deprecated Use [createNativeTransferTransaction] for multi-chain compatibility
      */
-    suspend fun createUsdcTransferTransaction(
+    @Deprecated("Use createNativeTransferTransaction", ReplaceWith("createNativeTransferTransaction(to, amountInEth, gasPrice, gasLimit, nonce)"))
+    suspend fun createEthTransferTransaction(
         to: String,
-        amountInUsdc: BigDecimal,
+        amountInEth: BigDecimal,
         gasPrice: BigInteger,
         gasLimit: BigInteger,
         nonce: BigInteger
-    ): Result<RawTransaction> = withContext(Dispatchers.IO) {
-        try {
-            // Convert USDC amount to smallest unit (6 decimals)
-            val amountInSmallestUnit = amountInUsdc
-                .multiply(BigDecimal.TEN.pow(6))
-                .toBigInteger()
+    ): Result<RawTransaction> = createNativeTransferTransaction(to, amountInEth, gasPrice, gasLimit, nonce)
 
-            // Create transfer function
-            val function = Function(
-                "transfer",
-                listOf(
-                    Address(to),
-                    Uint256(amountInSmallestUnit)
-                ),
-                emptyList()
-            )
-
-            val encodedFunction = FunctionEncoder.encode(function)
-
-            val rawTransaction = RawTransaction.createTransaction(
-                nonce,
-                gasPrice,
-                gasLimit,
-                NetworkConstants.USDC_CONTRACT_ADDRESS,
-                BigInteger.ZERO,
-                encodedFunction
-            )
-
-            Timber.d("Created USDC transfer transaction: $amountInUsdc USDC to $to")
-            Result.success(rawTransaction)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to create USDC transfer transaction")
-            Result.failure(e)
-        }
-    }
+    // =========================================================================
+    // EIP-155 TRANSACTION SIGNING
+    // =========================================================================
 
     /**
-     * Get transaction hash for signing
-     */
-    fun getTransactionHash(rawTransaction: RawTransaction): ByteArray {
-        return TransactionEncoder.encode(rawTransaction, NetworkConstants.CHAIN_ID)
-    }
-
-    /**
-     * Get transaction hash for signing with Tangem
-     * Uses EIP-155 format (with chain ID) for replay protection
+     * Get transaction hash for signing with Tangem.
+     * Uses EIP-155 format (with chain ID) for replay protection.
      */
     fun getTransactionHashForTangemSigning(rawTransaction: RawTransaction): ByteArray {
         // Encode transaction WITH chain ID (EIP-155 format)
-        // This creates: rlp(nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0)
-        val encoded = TransactionEncoder.encode(rawTransaction, NetworkConstants.CHAIN_ID)
+        val encoded = TransactionEncoder.encode(rawTransaction, _chain.chainId)
 
         // Hash it with Keccak256
         val hash = Hash.sha3(encoded)
 
         Timber.d("EIP-155 encoded tx length: ${encoded.size} bytes")
-        Timber.d("Chain ID: ${NetworkConstants.CHAIN_ID}")
+        Timber.d("Chain: ${_chain.name} (ID: ${_chain.chainId})")
         Timber.d("Keccak256 hash: ${Numeric.toHexString(hash)}")
 
         return hash
     }
 
+    /**
+     * Get transaction hash (alias for compatibility).
+     * @deprecated Use [getTransactionHashForTangemSigning]
+     */
+    @Deprecated("Use getTransactionHashForTangemSigning", ReplaceWith("getTransactionHashForTangemSigning(rawTransaction)"))
+    fun getTransactionHash(rawTransaction: RawTransaction): ByteArray {
+        return TransactionEncoder.encode(rawTransaction, _chain.chainId)
+    }
+
+    /**
+     * Send signed transaction with RPC fallback.
+     */
     suspend fun sendSignedTransaction(signedTransaction: ByteArray): Result<String> = withContext(Dispatchers.IO) {
         val hexValue = Numeric.toHexString(signedTransaction)
         var lastException: Exception? = null
 
         // Try each RPC endpoint
-        for (rpcUrl in NetworkConstants.RPC_URLS) {
+        for (rpcUrl in _chain.rpcUrls) {
             try {
                 Timber.d("=== SENDING TRANSACTION ===")
-                Timber.d("To network: $rpcUrl")
-                Timber.d("Expected chain ID: ${NetworkConstants.CHAIN_ID}")
+                Timber.d("To network: ${_chain.name} via $rpcUrl")
+                Timber.d("Chain ID: ${_chain.chainId}")
                 Timber.d("Raw transaction hex: $hexValue")
 
                 val web3jInstance = Web3j.build(HttpService(rpcUrl))
@@ -355,7 +287,7 @@ class Web3Manager {
         }
 
         // All RPCs failed
-        Timber.e("All RPC endpoints failed")
+        Timber.e("All RPC endpoints failed for ${_chain.name}")
         Result.failure(lastException ?: Exception("All RPC endpoints failed"))
     }
 
@@ -365,15 +297,15 @@ class Web3Manager {
     // =========================================================================
 
     /**
-     * Get balance for any token (ETH or ERC-20).
+     * Get balance for any token (native or ERC-20).
      *
      * @param address The wallet address to check
      * @param token The token to get balance for
-     * @return Balance in human-readable units (e.g., "1.5" ETH, "100" USDC)
+     * @return Balance in human-readable units
      */
     suspend fun getTokenBalance(address: String, token: Token): Result<BigDecimal> {
         return when (token) {
-            is Token.ETH -> getEthBalance(address)
+            is Token.Native -> getNativeBalance(address)
             is Token.ERC20 -> getErc20Balance(address, token)
         }
     }
@@ -383,6 +315,11 @@ class Web3Manager {
      */
     suspend fun getErc20Balance(address: String, token: Token.ERC20): Result<BigDecimal> = withContext(Dispatchers.IO) {
         try {
+            val contractAddress = TokenContractRegistry.getContractAddress(token, _chain)
+                ?: return@withContext Result.failure(
+                    Exception("${token.symbol} is not available on ${_chain.name}")
+                )
+
             val function = Function(
                 "balanceOf",
                 listOf(Address(address)),
@@ -394,7 +331,7 @@ class Web3Manager {
             val response = web3j.ethCall(
                 Transaction.createEthCallTransaction(
                     address,
-                    token.contractAddress,
+                    contractAddress,
                     encodedFunction
                 ),
                 DefaultBlockParameterName.LATEST
@@ -416,22 +353,23 @@ class Web3Manager {
             val balanceInSmallestUnit = (returnValues[0] as Uint256).value
             val balance = token.fromSmallestUnit(balanceInSmallestUnit)
 
-            Timber.d("${token.symbol} Balance: $balance")
+            Timber.d("${token.symbol} Balance on ${_chain.shortName}: $balance")
             Result.success(balance)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to get ${token.symbol} balance")
+            Timber.e(e, "Failed to get ${token.symbol} balance on ${_chain.shortName}")
             Result.failure(e)
         }
     }
 
     /**
-     * Get balances for all tokens in TokenRegistry.
+     * Get balances for all tokens available on current chain.
      *
      * @param address The wallet address to check
      * @return Map of token symbol to balance
      */
     suspend fun getAllTokenBalances(address: String): Map<String, Result<BigDecimal>> {
-        return TokenRegistry.allTokens.associate { token ->
+        val availableTokens = TokenContractRegistry.getTokensForChain(_chain)
+        return availableTokens.associate { token ->
             token.symbol to getTokenBalance(address, token)
         }
     }
@@ -446,7 +384,7 @@ class Web3Manager {
         amount: BigInteger
     ): Result<BigInteger> {
         return when (token) {
-            is Token.ETH -> estimateGasForEthTransfer(from, to, amount)
+            is Token.Native -> estimateGasForNativeTransfer(from, to, amount)
             is Token.ERC20 -> estimateGasForErc20Transfer(from, to, token, amount)
         }
     }
@@ -461,6 +399,11 @@ class Web3Manager {
         amount: BigInteger
     ): Result<BigInteger> = withContext(Dispatchers.IO) {
         try {
+            val contractAddress = TokenContractRegistry.getContractAddress(token, _chain)
+                ?: return@withContext Result.failure(
+                    Exception("${token.symbol} is not available on ${_chain.name}")
+                )
+
             val function = Function(
                 "transfer",
                 listOf(Address(to), Uint256(amount)),
@@ -474,7 +417,7 @@ class Web3Manager {
                 null,
                 null,
                 null,
-                token.contractAddress,
+                contractAddress,
                 encodedFunction
             )
 
@@ -486,10 +429,10 @@ class Web3Manager {
 
             val estimatedGas = gasEstimate.amountUsed
             val bufferedGas = GasUtils.addGasBuffer(estimatedGas)
-            Timber.d("Estimated gas for ${token.symbol} transfer: $estimatedGas (with buffer: $bufferedGas)")
+            Timber.d("Estimated gas for ${token.symbol} transfer on ${_chain.shortName}: $estimatedGas (with buffer: $bufferedGas)")
             Result.success(bufferedGas)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to estimate gas for ${token.symbol} transfer")
+            Timber.e(e, "Failed to estimate gas for ${token.symbol} transfer on ${_chain.shortName}")
             Result.success(token.defaultGasLimit)
         }
     }
@@ -506,7 +449,7 @@ class Web3Manager {
         nonce: BigInteger
     ): Result<RawTransaction> {
         return when (token) {
-            is Token.ETH -> createEthTransferTransaction(to, amount, gasPrice, gasLimit, nonce)
+            is Token.Native -> createNativeTransferTransaction(to, amount, gasPrice, gasLimit, nonce)
             is Token.ERC20 -> createErc20TransferTransaction(to, token, amount, gasPrice, gasLimit, nonce)
         }
     }
@@ -523,6 +466,11 @@ class Web3Manager {
         nonce: BigInteger
     ): Result<RawTransaction> = withContext(Dispatchers.IO) {
         try {
+            val contractAddress = TokenContractRegistry.getContractAddress(token, _chain)
+                ?: return@withContext Result.failure(
+                    Exception("${token.symbol} is not available on ${_chain.name}")
+                )
+
             val amountInSmallestUnit = token.toSmallestUnit(amount)
 
             val function = Function(
@@ -540,16 +488,57 @@ class Web3Manager {
                 nonce,
                 gasPrice,
                 gasLimit,
-                token.contractAddress,
+                contractAddress,
                 BigInteger.ZERO,
                 encodedFunction
             )
 
-            Timber.d("Created ${token.symbol} transfer transaction: $amount ${token.symbol} to $to")
+            Timber.d("Created ${token.symbol} transfer: $amount to $to on ${_chain.shortName}")
             Result.success(rawTransaction)
         } catch (e: Exception) {
-            Timber.e(e, "Failed to create ${token.symbol} transfer transaction")
+            Timber.e(e, "Failed to create ${token.symbol} transfer transaction on ${_chain.shortName}")
             Result.failure(e)
         }
+    }
+
+    // =========================================================================
+    // LEGACY METHODS (for backward compatibility)
+    // =========================================================================
+
+    /**
+     * Get USDC balance for an address.
+     * @deprecated Use [getErc20Balance] with [TokenRegistry.USDC] instead
+     */
+    @Deprecated("Use getErc20Balance with TokenRegistry.USDC", ReplaceWith("getErc20Balance(address, TokenRegistry.USDC)"))
+    suspend fun getUsdcBalance(address: String): Result<BigDecimal> {
+        return getErc20Balance(address, TokenRegistry.USDC)
+    }
+
+    /**
+     * Estimate gas for USDC transfer.
+     * @deprecated Use [estimateGasForErc20Transfer] with [TokenRegistry.USDC] instead
+     */
+    @Deprecated("Use estimateGasForErc20Transfer with TokenRegistry.USDC")
+    suspend fun estimateGasForUsdcTransfer(
+        from: String,
+        to: String,
+        amount: BigInteger
+    ): Result<BigInteger> {
+        return estimateGasForErc20Transfer(from, to, TokenRegistry.USDC, amount)
+    }
+
+    /**
+     * Create unsigned USDC transfer transaction.
+     * @deprecated Use [createErc20TransferTransaction] with [TokenRegistry.USDC] instead
+     */
+    @Deprecated("Use createErc20TransferTransaction with TokenRegistry.USDC")
+    suspend fun createUsdcTransferTransaction(
+        to: String,
+        amountInUsdc: BigDecimal,
+        gasPrice: BigInteger,
+        gasLimit: BigInteger,
+        nonce: BigInteger
+    ): Result<RawTransaction> {
+        return createErc20TransferTransaction(to, TokenRegistry.USDC, amountInUsdc, gasPrice, gasLimit, nonce)
     }
 }

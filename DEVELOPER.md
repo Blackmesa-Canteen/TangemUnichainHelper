@@ -7,19 +7,20 @@ This document provides comprehensive documentation for developers working on thi
 1. [Project Overview](#project-overview)
 2. [Architecture](#architecture)
 3. [The Tangem Hack Explained](#the-tangem-hack-explained)
-4. [Adding New Tokens](#adding-new-tokens)
-5. [Adding New Networks](#adding-new-networks)
-6. [Key Components](#key-components)
-7. [Transaction Flow](#transaction-flow)
-8. [Security Considerations](#security-considerations)
-9. [Testing](#testing)
-10. [Troubleshooting](#troubleshooting)
+4. [Multi-Chain Support](#multi-chain-support)
+5. [Adding New Chains](#adding-new-chains)
+6. [Adding New Tokens](#adding-new-tokens)
+7. [Key Components](#key-components)
+8. [Transaction Flow](#transaction-flow)
+9. [Security Considerations](#security-considerations)
+10. [Testing](#testing)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Project Overview
 
-This Android app enables users to transfer ETH and ERC-20 tokens on **Unichain** (Chain ID: 130) using **Tangem NFC cards**. Since the official Tangem app doesn't support Unichain, this app implements a workaround to make it work.
+This Android app enables users to transfer ETH and ERC-20 tokens on **any EVM chain** using **Tangem NFC cards**. The default chain is **Unichain** (Chain ID: 130), but the architecture supports adding any EVM chain.
 
 ### Tech Stack
 
@@ -36,41 +37,58 @@ This Android app enables users to transfer ETH and ERC-20 tokens on **Unichain**
 ```
 app/src/main/java/com/example/tangemunichainhelper/
 ├── core/
-│   ├── AddressUtils.kt      # EIP-55 address validation
-│   ├── GasUtils.kt          # Gas formatting and calculations
-│   ├── NetworkConstants.kt  # Unichain RPC and config
-│   ├── TangemManager.kt     # Tangem SDK integration
-│   ├── Token.kt             # Token abstraction & registry
-│   └── Web3Manager.kt       # All Web3/blockchain operations
+│   ├── AddressUtils.kt          # EIP-55 address validation
+│   ├── Chain.kt                 # Chain sealed class + ChainRegistry
+│   ├── GasUtils.kt              # Gas formatting and calculations
+│   ├── NetworkConstants.kt      # (Deprecated) Legacy constants
+│   ├── TangemManager.kt         # Tangem SDK integration
+│   ├── Token.kt                 # Token sealed class + TokenRegistry
+│   ├── TokenContractRegistry.kt # Chain-specific token addresses
+│   └── Web3Manager.kt           # Chain-aware blockchain operations
 ├── ui/
-│   ├── MainViewModel.kt     # State management & business logic
-│   └── theme/Theme.kt       # Material Design theme
-├── MainActivity.kt          # Compose UI
-└── TangemUnichainApp.kt     # Application class
+│   ├── MainViewModel.kt         # State management & business logic
+│   └── theme/Theme.kt           # Material Design theme
+├── MainActivity.kt              # Compose UI with ChainSelector
+└── TangemUnichainApp.kt         # Application class
+```
+
+### Multi-Chain Data Model
+
+```
+Chain (sealed class)
+├── Unichain (data object)     → chainId=130, default
+├── Sepolia (data object)      → chainId=11155111, testnet
+└── Custom (data class)        → For developer-defined chains
+
+Token (sealed class)
+├── Native (data object)       → ETH on all chains
+└── ERC20 (data class)         → Symbol, name, decimals (no address)
+
+TokenContractRegistry
+└── Maps (Token, Chain) → contract address
 ```
 
 ---
 
-## How Tangem Signing Works with Unichain
+## How Tangem Signing Works with Any EVM Chain
 
-### The Problem
+### The Key Insight
 
-Tangem SDK is configured for specific chains (Ethereum, etc.) and doesn't officially support Unichain (Chain ID: 130). The official Tangem app can't sign Unichain transactions.
-
-### The Solution: EIP-155 Transactions
-
-The key insight is that **Tangem cards don't care about chains** — they just sign whatever 32-byte hash you give them. We leverage this to create proper EIP-155 replay-protected transactions:
+Tangem cards **don't care about chains** — they just sign whatever 32-byte hash you give them. We leverage this to sign for any EVM chain by including the correct chain ID in the EIP-155 hash:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              HOW TANGEM SIGNS UNICHAIN TRANSACTIONS             │
+│              HOW TANGEM SIGNS ANY EVM TRANSACTION               │
 ├─────────────────────────────────────────────────────────────────┤
 │ 1. Create transaction data (nonce, gasPrice, to, value, data)   │
 │                                                                 │
 │ 2. Hash with EIP-155 format (includes chain ID):                │
 │    hash = keccak256(rlp(nonce,gasPrice,gasLimit,to,value,       │
 │                         data,chainId,0,0))                      │
-│    For Unichain: chainId = 130                                  │
+│    Examples:                                                    │
+│      • Unichain: chainId = 130                                  │
+│      • Ethereum: chainId = 1                                    │
+│      • Polygon: chainId = 137                                   │
 │                                                                 │
 │ 3. Tangem signs the hash (card just signs 32 bytes)             │
 │    → Returns 64-byte signature (r, s)                           │
@@ -80,53 +98,150 @@ The key insight is that **Tangem cards don't care about chains** — they just s
 │                                                                 │
 │ 5. Encode with EIP-155 v value:                                 │
 │    v = chainId * 2 + 35 + recoveryId                            │
-│    For Unichain: v = 130 * 2 + 35 + recoveryId = 295 or 296     │
+│    Examples:                                                    │
+│      • Unichain: v = 130 * 2 + 35 + recoveryId = 295 or 296     │
+│      • Ethereum: v = 1 * 2 + 35 + recoveryId = 37 or 38         │
 │                                                                 │
-│ 6. Broadcast to Unichain RPC                                    │
-│    → Transaction is replay-protected for chain 130              │
+│ 6. Broadcast to the chain's RPC                                 │
+│    → Transaction is replay-protected for that specific chain    │
 ├─────────────────────────────────────────────────────────────────┤
-│ ✅ Replay Protection: Transaction only valid on Unichain        │
-│ ✅ Works with any EVM chain by changing CHAIN_ID                │
+│ ✅ Works with ANY EVM chain by changing chain ID and RPC        │
+│ ✅ Replay Protection: Transaction only valid on target chain    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Code Locations
 
-**Hash Generation** (`Web3Manager.kt`):
+**Chain-aware hash generation** (`Web3Manager.kt`):
 ```kotlin
 fun getTransactionHashForTangemSigning(rawTransaction: RawTransaction): ByteArray {
-    // Encode WITH chain ID (EIP-155 format)
-    val encoded = TransactionEncoder.encode(rawTransaction, NetworkConstants.CHAIN_ID)
+    // Uses current chain's ID for EIP-155 encoding
+    val encoded = TransactionEncoder.encode(rawTransaction, _chain.chainId)
     return Hash.sha3(encoded)
 }
 ```
 
 **v Value Calculation** (`MainViewModel.kt`):
 ```kotlin
-// EIP-155 v value: chainId * 2 + 35 + recoveryId
-val chainId = NetworkConstants.CHAIN_ID  // 130 for Unichain
-val vValue = chainId * 2 + 35 + recoveryId  // 295 or 296
+val chainId = web3Manager.currentChain.chainId
+val vValue = chainId * 2 + 35 + recoveryId
 ```
 
-### Why This Works
+---
 
-The Tangem card's secure element:
-- Receives a 32-byte hash
-- Signs it with the private key
-- Returns 64 bytes (r, s)
+## Multi-Chain Support
 
-It has **no knowledge of**:
-- Which blockchain the transaction is for
-- What chain ID is embedded in the hash
-- Whether it's EIP-155 or legacy format
+### Shipped Chains
 
-This means you can sign for **any EVM chain** by simply including that chain's ID in the hash.
+This app ships with two chains configured:
+
+| Chain | Chain ID | Type | Native | Purpose |
+|-------|----------|------|--------|---------|
+| Unichain | 130 | Mainnet (default) | ETH | Primary chain for production use |
+| Sepolia | 11155111 | Testnet | ETH | Development and testing |
+
+### Shipped Tokens (Unichain only)
+
+| Token | Contract Address | Verified Source |
+|-------|------------------|-----------------|
+| USDC | `0x078D782b760474a361dDA0AF3839290b0EF57AD6` | [Unichain Docs](https://docs.unichain.org/docs/building-on-unichain/transfer-usdc) |
+| USDT | `0x9151434b16b9763660705744891fa906f660ecc5` | [USDT0 - LayerZero](https://zapper.xyz/token/unichain/0x9151434b16b9763660705744891fa906f660ecc5) |
+
+**Note**: Sepolia is a testnet with no production tokens configured.
+
+---
+
+## Adding New Chains
+
+Developers can add support for any EVM chain in 3 steps:
+
+### Step 1: Define the Chain
+
+Open `core/Chain.kt` and add your chain:
+
+**Option A: Add as data object (recommended for well-known chains)**
+```kotlin
+sealed class Chain {
+    // ... existing chains ...
+
+    /**
+     * Ethereum Mainnet
+     * Chain ID: 1
+     */
+    data object Ethereum : Chain() {
+        override val chainId: Long = 1L
+        override val name: String = "Ethereum Mainnet"
+        override val shortName: String = "Ethereum"
+        override val nativeCurrencySymbol: String = "ETH"
+        override val explorerUrl: String = "https://etherscan.io"
+        override val rpcUrls: List<String> = listOf(
+            "https://eth.drpc.org",
+            "https://ethereum-rpc.publicnode.com"
+        )
+        override val isTestnet: Boolean = false
+    }
+}
+```
+
+**Option B: Use Custom data class**
+```kotlin
+val polygon = Chain.Custom(
+    chainId = 137L,
+    name = "Polygon Mainnet",
+    shortName = "Polygon",
+    nativeCurrencySymbol = "MATIC",
+    explorerUrl = "https://polygonscan.com",
+    rpcUrls = listOf("https://polygon-rpc.com"),
+    isTestnet = false
+)
+```
+
+### Step 2: Register in ChainRegistry
+
+Add your chain to the `allChains` list in `ChainRegistry`:
+
+```kotlin
+object ChainRegistry {
+    val allChains: List<Chain> = listOf(
+        Chain.Unichain,
+        Chain.Sepolia,
+        Chain.Ethereum,  // Add your chain here
+    )
+}
+```
+
+### Step 3: Add Token Contracts (Optional)
+
+If your chain has tokens, add their contract addresses in `TokenContractRegistry.kt`:
+
+```kotlin
+private val contracts: Map<Long, Map<String, String>> = mapOf(
+    // Existing Unichain tokens...
+    130L to mapOf(
+        "USDC" to "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+        "USDT" to "0x9151434b16b9763660705744891fa906f660ecc5"
+    ),
+
+    // Add your chain's tokens:
+    1L to mapOf(  // Ethereum Mainnet
+        "USDC" to "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "USDT" to "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    )
+)
+```
+
+### Security Warning
+
+**ALWAYS verify chain IDs and contract addresses from official sources**:
+- Chain IDs: [chainlist.org](https://chainlist.org)
+- Token contracts: Official project documentation or block explorers
+- Wrong addresses can result in **permanent loss of funds**
 
 ---
 
 ## Adding New Tokens
 
-Adding a new ERC-20 token takes just **2 steps**:
+Adding a new ERC-20 token takes 2-3 steps:
 
 ### Step 1: Define the Token
 
@@ -136,99 +251,81 @@ Open `core/Token.kt` and add your token in `TokenRegistry`:
 object TokenRegistry {
     // ... existing tokens ...
 
-    // Add your new token:
-    val USDT = Token.ERC20(
-        symbol = "USDT",
-        name = "Tether USD",
-        contractAddress = "0x...",  // Find on Unichain explorer
-        decimals = 6,               // Usually 6 for stablecoins, 18 for most tokens
-        defaultGasLimit = BigInteger.valueOf(65000)  // Optional, 65000 is default
+    val WETH = Token.ERC20(
+        symbol = "WETH",
+        name = "Wrapped Ether",
+        decimals = 18  // Most tokens use 18, stablecoins often use 6
+    )
+
+    // Add to allTokens list:
+    val allTokens: List<Token> = listOf(
+        Native,
+        USDC,
+        USDT,
+        WETH,  // Add here
     )
 }
 ```
 
-### Step 2: Add to Token List
+### Step 2: Add Contract Addresses
 
-In the same file, add your token to `allTokens`:
+Open `core/TokenContractRegistry.kt` and add the token's contract address for each chain:
 
 ```kotlin
-val allTokens: List<Token> = listOf(
-    ETH,
-    USDC,
-    USDT,  // Add here
+private val contracts: Map<Long, Map<String, String>> = mapOf(
+    130L to mapOf(  // Unichain
+        "USDC" to "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+        "USDT" to "0x9151434b16b9763660705744891fa906f660ecc5",
+        "WETH" to "0x..."  // Add WETH address for Unichain
+    ),
+
+    // Add for other chains you support:
+    1L to mapOf(  // Ethereum
+        "USDC" to "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "WETH" to "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    )
 )
 ```
 
-**That's it!** The UI will automatically show the new token.
+**That's it!** The UI will automatically show the token on chains where it's configured.
 
 ### Finding Token Information
 
-1. Go to [Uniscan](https://uniscan.xyz)
-2. Search for the token name or paste its contract address
+1. Go to the chain's block explorer (e.g., [Uniscan](https://uniscan.xyz))
+2. Search for the token or paste its contract address
 3. Find:
    - **Contract Address**: The `0x...` address
-   - **Decimals**: Usually shown in token info (6 for USDC/USDT, 18 for most others)
-
-### Example: Adding WETH
-
-```kotlin
-val WETH = Token.ERC20(
-    symbol = "WETH",
-    name = "Wrapped Ether",
-    contractAddress = "0x4200000000000000000000000000000000000006",  // Common WETH address
-    decimals = 18
-)
-
-val allTokens: List<Token> = listOf(ETH, USDC, WETH)
-```
-
----
-
-## Adding New Networks
-
-To support a different EVM chain (not just Unichain):
-
-### Step 1: Update NetworkConstants
-
-Edit `core/NetworkConstants.kt`:
-
-```kotlin
-object NetworkConstants {
-    // Change these for your target network:
-    const val CHAIN_ID = 130L  // e.g., 1 for Ethereum, 137 for Polygon
-    const val NETWORK_NAME = "Unichain Mainnet"
-    const val RPC_URL = "https://mainnet.unichain.org"
-    const val EXPLORER_URL = "https://uniscan.xyz"
-
-    // Update token addresses for the new network
-    const val USDC_CONTRACT_ADDRESS = "0x..."
-}
-```
-
-### Step 2: Update TokenRegistry
-
-Token contract addresses are **different on each chain**. Update all addresses in `Token.kt`:
-
-```kotlin
-val USDC = Token.ERC20(
-    symbol = "USDC",
-    name = "USD Coin",
-    contractAddress = "0x...",  // USDC address on YOUR chain
-    decimals = 6
-)
-```
-
-### Note on Chain Support
-
-The EIP-155 signing works on **any EVM chain** — just change the `CHAIN_ID` in `NetworkConstants.kt`. The signing logic automatically adapts. Only the RPC URL and contract addresses need updating for each chain.
+   - **Decimals**: Usually 6 for stablecoins, 18 for most others
 
 ---
 
 ## Key Components
 
+### Chain.kt
+
+Defines the chain abstraction:
+
+```kotlin
+sealed class Chain {
+    abstract val chainId: Long
+    abstract val name: String
+    abstract val nativeCurrencySymbol: String
+    abstract val rpcUrls: List<String>
+    abstract val explorerUrl: String
+    abstract val isTestnet: Boolean
+
+    data object Unichain : Chain() { ... }
+    data object Sepolia : Chain() { ... }
+    data class Custom(...) : Chain()
+
+    fun txExplorerUrl(txHash: String): String
+    fun addressExplorerUrl(address: String): String
+}
+```
+
 ### Token.kt
 
-Defines the token abstraction:
+Defines the token abstraction (chain-agnostic):
 
 ```kotlin
 sealed class Token {
@@ -237,26 +334,41 @@ sealed class Token {
     abstract val decimals: Int
     abstract val defaultGasLimit: BigInteger
 
-    data object ETH : Token() { ... }
-    data class ERC20(...) : Token() { ... }
+    data object Native : Token() { ... }
+    data class ERC20(symbol, name, decimals) : Token()
 
     fun toSmallestUnit(amount: BigDecimal): BigInteger
     fun fromSmallestUnit(amount: BigInteger): BigDecimal
 }
 ```
 
+### TokenContractRegistry.kt
+
+Maps tokens to chain-specific contract addresses:
+
+```kotlin
+object TokenContractRegistry {
+    fun getContractAddress(token: Token.ERC20, chain: Chain): String?
+    fun getTokensForChain(chain: Chain): List<Token>
+    fun isTokenAvailable(token: Token, chain: Chain): Boolean
+    fun findByContractAddress(address: String, chain: Chain): Token.ERC20?
+}
+```
+
 ### Web3Manager.kt
 
-Handles all blockchain operations:
+Handles all chain-aware blockchain operations:
 
 | Method | Purpose |
 |--------|---------|
-| `getTokenBalance(address, token)` | Get balance for any token |
-| `getAllTokenBalances(address)` | Get all token balances |
-| `estimateGasForTransfer(...)` | Estimate gas for any transfer |
+| `switchChain(chain)` | Switch to a different chain |
+| `getNativeBalance(address)` | Get native currency balance |
+| `getErc20Balance(address, token)` | Get ERC-20 token balance |
+| `getAllTokenBalances(address)` | Get all available token balances |
+| `estimateGasForTransfer(...)` | Estimate gas for transfer |
 | `createTransferTransaction(...)` | Create unsigned transaction |
 | `getTransactionHashForTangemSigning(tx)` | Get EIP-155 hash for signing |
-| `sendSignedTransaction(signedTx)` | Broadcast to network |
+| `sendSignedTransaction(signedTx)` | Broadcast to current chain |
 
 ### MainViewModel.kt
 
@@ -264,32 +376,12 @@ Business logic and state management:
 
 | Method | Purpose |
 |--------|---------|
+| `selectChain(chain)` | Switch chain and reload balances |
 | `scanCard()` | Scan Tangem card via NFC |
-| `loadBalances()` | Load all token balances |
-| `calculateMaxTransferAmount(token)` | Calculate max sendable (with gas reserved) |
+| `loadBalances()` | Load all token balances for current chain |
+| `calculateMaxTransferAmount(token)` | Calculate max sendable |
 | `prepareTransfer(address, amount, token)` | Validate and prepare transfer |
 | `executeTransfer()` | Sign with Tangem and broadcast |
-
-### GasUtils.kt
-
-Gas formatting and calculations:
-
-| Method | Purpose |
-|--------|---------|
-| `formatGasPriceGwei(wei)` | Format gas price for display |
-| `formatGasLimit(limit, isErc20)` | Format with context label |
-| `formatGasFeeEth(wei)` | Format gas fee in ETH |
-| `addGasBuffer(estimate)` | Add 20% safety buffer |
-
-### AddressUtils.kt
-
-Address validation:
-
-| Method | Purpose |
-|--------|---------|
-| `validateAddress(address)` | Full validation with EIP-55 checksum |
-| `toChecksumAddress(address)` | Convert to checksum format |
-| `isValidAddressFormat(address)` | Quick format check |
 
 ---
 
@@ -300,45 +392,40 @@ Address validation:
 │                     TRANSACTION FLOW                              │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  1. User Input                                                   │
+│  1. User selects chain (via ChainSelector dropdown)              │
+│     └─► Web3Manager switches RPC connection                      │
+│                                                                  │
+│  2. User Input                                                   │
 │     └─► Recipient address, amount, token selection               │
 │                                                                  │
-│  2. Validation (prepareTransfer)                                 │
+│  3. Validation (prepareTransfer)                                 │
 │     ├─► EIP-55 address checksum                                  │
 │     ├─► Self-send prevention                                     │
 │     ├─► Amount > 0                                               │
-│     └─► Sufficient balance (token + ETH for gas)                 │
+│     └─► Sufficient balance (token + native for gas)              │
 │                                                                  │
-│  3. Get Network Data                                             │
-│     ├─► Nonce (transaction count)                                │
-│     ├─► Gas price (current network price)                        │
+│  4. Get Network Data (chain-aware)                               │
+│     ├─► Nonce (from current chain's RPC)                         │
+│     ├─► Gas price (from current chain)                           │
 │     └─► Gas estimate (with 20% buffer)                           │
 │                                                                  │
-│  4. Create Transaction (createTransferTransaction)               │
-│     ├─► For ETH: RawTransaction.createEtherTransaction()         │
-│     └─► For ERC-20: RawTransaction with encoded transfer()       │
+│  5. Create Transaction (with chain's token contract)             │
+│     ├─► For native: RawTransaction.createEtherTransaction()      │
+│     └─► For ERC-20: Uses TokenContractRegistry for address       │
 │                                                                  │
-│  5. Generate Hash (getTransactionHashForTangemSigning)           │
-│     └─► EIP-155 format: keccak256(rlp(nonce,...,data,chainId,0,0))│
+│  6. Generate Hash (chain-specific EIP-155)                       │
+│     └─► hash = keccak256(rlp(...,chain.chainId,0,0))             │
 │                                                                  │
-│  6. Sign with Tangem (signTransactionHash)                       │
-│     ├─► User taps NFC card                                       │
-│     ├─► Card signs hash                                          │
-│     └─► Returns 64-byte signature (r, s)                         │
+│  7. Sign with Tangem (chain-agnostic)                            │
+│     └─► Card signs 32-byte hash, returns (r, s)                  │
 │                                                                  │
-│  7. Find Recovery ID (findCorrectRecoveryId)                     │
-│     ├─► Try recoveryId = 0, recover public key                   │
-│     ├─► Try recoveryId = 1, recover public key                   │
-│     └─► Return ID that matches expected public key               │
+│  8. Find Recovery ID & Encode                                    │
+│     └─► v = chain.chainId * 2 + 35 + recoveryId                  │
 │                                                                  │
-│  8. Encode Signed Transaction                                    │
-│     └─► RLP encode with v = chainId*2 + 35 + recoveryId (EIP-155)│
-│                                                                  │
-│  9. Broadcast (sendSignedTransaction)                            │
-│     └─► eth_sendRawTransaction to Unichain RPC                   │
+│  9. Broadcast (to current chain's RPC)                           │
 │                                                                  │
 │ 10. Success                                                      │
-│     ├─► Show transaction hash                                    │
+│     ├─► Show transaction hash with chain's explorer link         │
 │     └─► Refresh balances                                         │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
@@ -354,47 +441,53 @@ Address validation:
 |--------|--------|-------|
 | Private Keys | ✅ Secure | Never leave Tangem card |
 | Signing | ✅ Secure | Happens in card's secure element |
+| Replay Protection | ✅ Good | EIP-155 makes transactions chain-specific |
 | Input Validation | ✅ Good | EIP-55 checksum, self-send prevention |
-| Gas Estimation | ✅ Good | 20% buffer prevents failures |
+
+### Contract Address Security
+
+**Critical**: Wrong token contract addresses can result in lost funds.
+
+- Only Unichain token addresses are shipped (verified from official sources)
+- Developers adding other chains MUST verify addresses from official documentation
+- Consider adding a warning UI when using unverified custom chains
 
 ### Known Trade-offs
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
-| Replay Protection | ✅ Good | EIP-155 transactions are chain-specific |
 | RPC Security | ⚠️ Basic | Uses HTTPS but no cert pinning |
 | Logging | ⚠️ Verbose | Disable in production |
-
-### Replay Protection
-
-We use **EIP-155 transactions** which include the chain ID in the signed hash. This means:
-- Transactions signed for Unichain (chain ID 130) are **only valid on Unichain**
-- They cannot be replayed on Ethereum, Polygon, or any other chain
-- The v value encodes the chain ID, making the signature chain-specific
 
 ---
 
 ## Testing
 
+### Unit Tests
+
+The project includes comprehensive unit tests:
+
+- `ChainTest.kt` - Chain sealed class and ChainRegistry
+- `TokenContractRegistryTest.kt` - Token-to-chain mappings
+- `TokenTest.kt` - Token conversion and registry
+- `AddressUtilsTest.kt` - EIP-55 validation
+- `GasUtilsTest.kt` - Gas calculations
+- `ErrorInfoTest.kt` - Error categorization
+- `TransactionResultTest.kt` - Transaction display
+
+Run tests: `./gradlew test`
+
 ### Manual Testing Checklist
 
+- [ ] Switch between chains, verify balances update
 - [ ] Scan Tangem card, verify address matches Tangem app
-- [ ] Check ETH balance matches explorer
+- [ ] Check native balance matches explorer
 - [ ] Check ERC-20 balances match explorer
-- [ ] Test "Max" button for ETH (should reserve gas)
+- [ ] Test "Max" button for native currency (should reserve gas)
 - [ ] Test "Max" button for ERC-20 (should show full balance)
-- [ ] Test gas edit UI (change values and verify update)
-- [ ] Test small ETH transfer
+- [ ] Test small native transfer
 - [ ] Test small ERC-20 transfer
-- [ ] Verify transaction on Uniscan explorer
-
-### Common Test Scenarios
-
-1. **Insufficient gas**: Try ERC-20 transfer with 0 ETH
-2. **Invalid address**: Enter malformed address
-3. **Wrong checksum**: Enter valid address with wrong case
-4. **Self-send**: Try sending to own address
-5. **Amount > balance**: Try sending more than available
+- [ ] Verify transaction on chain's explorer
 
 ---
 
@@ -402,46 +495,29 @@ We use **EIP-155 transactions** which include the chain ID in the signed hash. T
 
 ### Transaction Fails with "Invalid Sender"
 
-**Cause**: v value or hash format mismatch.
+**Cause**: v value or hash format mismatch with chain ID.
 
-**Solution**: Ensure both are using EIP-155 format:
-- Hash: `TransactionEncoder.encode(rawTransaction, CHAIN_ID)`
-- v value: `chainId * 2 + 35 + recoveryId` (295 or 296 for Unichain)
+**Solution**: Ensure hash and v value use the same chain ID:
+- Hash: `TransactionEncoder.encode(rawTransaction, chain.chainId)`
+- v value: `chain.chainId * 2 + 35 + recoveryId`
 
 ### Transaction Fails with "only replay-protected transactions allowed"
 
 **Cause**: Using legacy format instead of EIP-155.
 
-**Solution**: The RPC requires EIP-155 transactions. Ensure:
-- Hash includes chain ID
-- v value uses EIP-155 formula (not legacy 27/28)
+**Solution**: The RPC requires EIP-155 transactions. Verify chain ID is included in hash.
 
-### Transaction Fails with "Insufficient Funds"
+### Token Not Showing for a Chain
 
-**Cause**: Not enough ETH for gas, or trying to send more than balance.
+**Cause**: Token not configured for that chain in TokenContractRegistry.
 
-**Solution**: Check ETH balance covers gas. Use "Max" button to auto-calculate.
-
-### Card Scan Fails
-
-**Cause**: NFC not enabled, or card not positioned correctly.
-
-**Solution**:
-1. Enable NFC in device settings
-2. Hold card flat against phone's NFC area
-3. Keep card steady until scan completes
+**Solution**: Add the token's contract address for the chain in `TokenContractRegistry.kt`.
 
 ### Balance Shows 0 for New Token
 
 **Cause**: Wrong contract address or decimals.
 
-**Solution**: Verify contract address on Uniscan. Check decimals match.
-
-### "Could Not Determine Recovery ID"
-
-**Cause**: Signature doesn't match expected public key.
-
-**Solution**: This is rare. Try re-scanning the card and signing again.
+**Solution**: Verify contract address on the chain's block explorer. Check decimals match.
 
 ---
 

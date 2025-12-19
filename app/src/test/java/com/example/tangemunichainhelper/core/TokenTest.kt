@@ -7,82 +7,84 @@ import java.math.BigInteger
 
 /**
  * Unit tests for Token and TokenRegistry.
+ *
+ * Note: Contract addresses are now managed by [TokenContractRegistry], not [Token.ERC20].
  */
 class TokenTest {
 
     // =========================================================================
-    // Token.ETH Tests
+    // Token.Native Tests
     // =========================================================================
 
     @Test
-    fun `ETH token should have correct properties`() {
-        val eth = Token.ETH
+    fun `Native token should have correct properties`() {
+        val native = Token.Native
 
-        assertEquals("ETH", eth.symbol)
-        assertEquals("Ethereum", eth.name)
-        assertEquals(18, eth.decimals)
-        assertEquals(BigInteger.valueOf(21000), eth.defaultGasLimit)
-        assertTrue(eth.isNative)
-        assertFalse(eth.isERC20)
+        assertEquals("ETH", native.symbol)
+        assertEquals("Native Currency", native.name)
+        assertEquals(18, native.decimals)
+        assertEquals(BigInteger.valueOf(21000), native.defaultGasLimit)
+        assertTrue(native.isNative)
+        assertFalse(native.isERC20)
     }
 
     @Test
-    fun `ETH toSmallestUnit should convert to Wei`() {
-        val eth = Token.ETH
+    fun `Native toSmallestUnit should convert to Wei`() {
+        val native = Token.Native
 
         // 1 ETH = 10^18 Wei
         val oneEth = BigDecimal.ONE
-        val wei = eth.toSmallestUnit(oneEth)
+        val wei = native.toSmallestUnit(oneEth)
         assertEquals(BigInteger.TEN.pow(18), wei)
     }
 
     @Test
-    fun `ETH toSmallestUnit should handle fractional amounts`() {
-        val eth = Token.ETH
+    fun `Native toSmallestUnit should handle fractional amounts`() {
+        val native = Token.Native
 
         // 0.5 ETH = 5 * 10^17 Wei
         val halfEth = BigDecimal("0.5")
-        val wei = eth.toSmallestUnit(halfEth)
+        val wei = native.toSmallestUnit(halfEth)
         assertEquals(BigInteger.valueOf(5).multiply(BigInteger.TEN.pow(17)), wei)
     }
 
     @Test
-    fun `ETH toSmallestUnit should handle small amounts`() {
-        val eth = Token.ETH
+    fun `Native toSmallestUnit should handle small amounts`() {
+        val native = Token.Native
 
         // 0.000001 ETH = 10^12 Wei
         val smallEth = BigDecimal("0.000001")
-        val wei = eth.toSmallestUnit(smallEth)
+        val wei = native.toSmallestUnit(smallEth)
         assertEquals(BigInteger.TEN.pow(12), wei)
     }
 
     @Test
-    fun `ETH fromSmallestUnit should convert from Wei`() {
-        val eth = Token.ETH
+    fun `Native fromSmallestUnit should convert from Wei`() {
+        val native = Token.Native
 
         // 10^18 Wei = 1 ETH
         val wei = BigInteger.TEN.pow(18)
-        val ethAmount = eth.fromSmallestUnit(wei)
+        val ethAmount = native.fromSmallestUnit(wei)
         assertEquals(0, BigDecimal.ONE.compareTo(ethAmount))
     }
 
     @Test
-    fun `ETH fromSmallestUnit should handle fractional amounts`() {
-        val eth = Token.ETH
+    fun `Native fromSmallestUnit should handle fractional amounts`() {
+        val native = Token.Native
 
         // 5 * 10^17 Wei = 0.5 ETH
         val wei = BigInteger.valueOf(5).multiply(BigInteger.TEN.pow(17))
-        val ethAmount = eth.fromSmallestUnit(wei)
+        val ethAmount = native.fromSmallestUnit(wei)
         assertEquals(0, BigDecimal("0.5").compareTo(ethAmount))
     }
 
     @Test
-    fun `ETH round trip conversion should be accurate`() {
-        val eth = Token.ETH
+    fun `Native round trip conversion should be accurate`() {
+        val native = Token.Native
 
         val original = BigDecimal("1.234567890123456789")
-        val wei = eth.toSmallestUnit(original)
-        val converted = eth.fromSmallestUnit(wei)
+        val wei = native.toSmallestUnit(original)
+        val converted = native.fromSmallestUnit(wei)
 
         // Should match to 18 decimal places
         assertEquals(0, original.compareTo(converted))
@@ -102,7 +104,17 @@ class TokenTest {
         assertEquals(BigInteger.valueOf(65000), usdc.defaultGasLimit)
         assertFalse(usdc.isNative)
         assertTrue(usdc.isERC20)
-        assertEquals("0x078D782b760474a361dDA0AF3839290b0EF57AD6", (usdc as Token.ERC20).contractAddress)
+    }
+
+    @Test
+    fun `USDT token should have correct properties`() {
+        val usdt = TokenRegistry.USDT
+
+        assertEquals("USDT", usdt.symbol)
+        assertEquals("Tether USD", usdt.name)
+        assertEquals(6, usdt.decimals)
+        assertFalse(usdt.isNative)
+        assertTrue(usdt.isERC20)
     }
 
     @Test
@@ -152,7 +164,6 @@ class TokenTest {
         val customToken = Token.ERC20(
             symbol = "TEST",
             name = "Test Token",
-            contractAddress = "0x1234567890123456789012345678901234567890",
             decimals = 8,
             defaultGasLimit = BigInteger.valueOf(100000)
         )
@@ -170,17 +181,25 @@ class TokenTest {
     // =========================================================================
 
     @Test
-    fun `TokenRegistry should contain ETH and USDC`() {
+    fun `TokenRegistry should contain Native, USDC, and USDT`() {
         val tokens = TokenRegistry.allTokens
 
-        assertTrue("Should contain ETH", tokens.any { it.symbol == "ETH" })
+        assertTrue("Should contain ETH (Native)", tokens.any { it.symbol == "ETH" })
         assertTrue("Should contain USDC", tokens.any { it.symbol == "USDC" })
-        assertTrue("Should have at least 2 tokens", tokens.size >= 2)
+        assertTrue("Should contain USDT", tokens.any { it.symbol == "USDT" })
+        assertEquals("Should have exactly 3 tokens", 3, tokens.size)
     }
 
     @Test
-    fun `TokenRegistry ETH should be singleton`() {
-        assertSame(Token.ETH, TokenRegistry.ETH)
+    fun `TokenRegistry Native should be singleton`() {
+        assertSame(Token.Native, TokenRegistry.Native)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `TokenRegistry ETH deprecated alias should work`() {
+        // Backward compatibility test
+        assertSame(Token.Native, TokenRegistry.ETH)
     }
 
     @Test
@@ -209,31 +228,12 @@ class TokenTest {
     }
 
     @Test
-    fun `TokenRegistry findByContractAddress should find USDC`() {
-        val found = TokenRegistry.findByContractAddress("0x078D782b760474a361dDA0AF3839290b0EF57AD6")
-        assertNotNull(found)
-        assertEquals("USDC", found?.symbol)
-    }
-
-    @Test
-    fun `TokenRegistry findByContractAddress should be case-insensitive`() {
-        val found = TokenRegistry.findByContractAddress("0x078d782b760474a361dda0af3839290b0ef57ad6")
-        assertNotNull(found)
-        assertEquals("USDC", found?.symbol)
-    }
-
-    @Test
-    fun `TokenRegistry findByContractAddress should return null for unknown`() {
-        val found = TokenRegistry.findByContractAddress("0x0000000000000000000000000000000000000000")
-        assertNull(found)
-    }
-
-    @Test
-    fun `TokenRegistry erc20Tokens should not contain ETH`() {
+    fun `TokenRegistry erc20Tokens should not contain Native`() {
         val erc20s = TokenRegistry.erc20Tokens
 
-        assertFalse("Should not contain ETH", erc20s.any { it.symbol == "ETH" })
+        assertFalse("Should not contain Native", erc20s.any { it is Token.Native })
         assertTrue("Should contain USDC", erc20s.any { it.symbol == "USDC" })
+        assertTrue("Should contain USDT", erc20s.any { it.symbol == "USDT" })
     }
 
     // =========================================================================
@@ -242,22 +242,32 @@ class TokenTest {
 
     @Test
     fun `toSmallestUnit with zero should return zero`() {
-        assertEquals(BigInteger.ZERO, Token.ETH.toSmallestUnit(BigDecimal.ZERO))
+        assertEquals(BigInteger.ZERO, Token.Native.toSmallestUnit(BigDecimal.ZERO))
         assertEquals(BigInteger.ZERO, TokenRegistry.USDC.toSmallestUnit(BigDecimal.ZERO))
     }
 
     @Test
     fun `fromSmallestUnit with zero should return zero`() {
-        assertEquals(0, BigDecimal.ZERO.compareTo(Token.ETH.fromSmallestUnit(BigInteger.ZERO)))
+        assertEquals(0, BigDecimal.ZERO.compareTo(Token.Native.fromSmallestUnit(BigInteger.ZERO)))
         assertEquals(0, BigDecimal.ZERO.compareTo(TokenRegistry.USDC.fromSmallestUnit(BigInteger.ZERO)))
     }
 
     @Test
     fun `toSmallestUnit with large amount should work`() {
         val largeAmount = BigDecimal("1000000") // 1 million ETH
-        val wei = Token.ETH.toSmallestUnit(largeAmount)
+        val wei = Token.Native.toSmallestUnit(largeAmount)
 
         // 1,000,000 * 10^18 = 10^24
         assertEquals(BigInteger.TEN.pow(24), wei)
+    }
+
+    // =========================================================================
+    // Backward Compatibility Tests
+    // =========================================================================
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `Token_ETH deprecated alias should work`() {
+        assertSame(Token.Native, Token.ETH)
     }
 }

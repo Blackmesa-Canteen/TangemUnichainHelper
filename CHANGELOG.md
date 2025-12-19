@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
+## [1.2.0] - 2025-12-19
+
+### Changed
+- **Major code refactoring** for improved maintainability
+  - Split `MainActivity.kt` (1050 lines) into focused component files:
+    - `ui/components/WalletComponents.kt` - Card scan, chain selector, balances
+    - `ui/components/TransferComponents.kt` - Transfer form and confirmation
+    - `ui/components/FeedbackComponents.kt` - Error and success cards
+  - Split `MainViewModel.kt` (994 lines) into:
+    - `ui/UiModels.kt` - Data classes (UiState, TransferParams, etc.)
+    - `core/TransactionSigner.kt` - Transaction encoding and signing utilities
+  - `MainActivity.kt` now ~140 lines (orchestration only)
+  - `MainViewModel.kt` now ~600 lines (business logic only)
+
+### Technical
+- Extracted `TransactionSigner` utility with:
+  - `encodeSignedTransaction()` - RLP encoding with EIP-155
+  - `findRecoveryId()` - ECDSA recovery ID determination
+  - `decompressPublicKey()` - secp256k1 key decompression
+- Added comprehensive unit tests for `TransactionSigner` (10 tests)
+- Total test count: 169 tests
+
 ## [1.1.2] - 2025-12-19
 
 ### Fixed

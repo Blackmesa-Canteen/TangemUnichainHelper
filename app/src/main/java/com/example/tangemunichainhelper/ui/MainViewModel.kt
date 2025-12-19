@@ -8,6 +8,7 @@ import com.example.tangemunichainhelper.core.Chain
 import com.example.tangemunichainhelper.core.ChainRegistry
 import com.example.tangemunichainhelper.core.TangemManager
 import com.example.tangemunichainhelper.core.Token
+import com.example.tangemunichainhelper.core.TransactionSigner
 import com.example.tangemunichainhelper.core.TokenContractRegistry
 import com.example.tangemunichainhelper.core.TokenRegistry
 import com.example.tangemunichainhelper.core.Web3Manager
@@ -16,13 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.web3j.crypto.Hash
-import org.web3j.crypto.RawTransaction
-import org.web3j.crypto.Sign
-import org.web3j.crypto.TransactionEncoder
-import org.web3j.rlp.RlpEncoder
-import org.web3j.rlp.RlpList
-import org.web3j.rlp.RlpString
 import org.web3j.utils.Numeric
 import timber.log.Timber
 import java.math.BigDecimal
@@ -474,18 +468,19 @@ class MainViewModel : ViewModel() {
                     return@launch
                 }
 
-                // Step 4: Re-encode with Unichain chain ID (130)
-                val recoveryId = findCorrectRecoveryId(
-                    rawTransaction = rawTransaction,
+                // Step 4: Find correct recovery ID
+                val recoveryId = TransactionSigner.findRecoveryId(
+                    txHash = transactionHash,
                     signature = signature,
                     expectedPublicKey = Numeric.hexStringToByteArray(cardInfo.derivedPublicKey)
                 )
 
-                // Step 5: Re-encode with Unichain chain ID (130)
-                val signedTransaction = encodeSignedTransactionWithSignature(
+                // Step 5: Encode signed transaction with EIP-155 chain ID
+                val signedTransaction = TransactionSigner.encodeSignedTransaction(
                     rawTransaction = rawTransaction,
                     signature = signature,
-                    recoveryId = recoveryId  // Pass the correct recovery ID
+                    recoveryId = recoveryId,
+                    chainId = web3Manager.currentChain.chainId
                 )
 
                 // Step 6: Send to Unichain network
@@ -549,199 +544,6 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    private fun encodeSignedTransactionWithSignature(
-        rawTransaction: RawTransaction,
-        signature: ByteArray,
-        recoveryId: Int
-    ): ByteArray {
-        val chainId = web3Manager.currentChain.chainId
-        Timber.d("Encoding signed transaction...")
-        Timber.d("Signature length: ${signature.size}")
-        Timber.d("Recovery ID: $recoveryId")
-        Timber.d("Chain ID: $chainId")
-
-        require(signature.size == 64) { "Expected 64-byte signature, got ${signature.size}" }
-
-        val r = signature.copyOfRange(0, 32)
-        val s = signature.copyOfRange(32, 64)
-
-        Timber.d("r: ${Numeric.toHexString(r)}")
-        Timber.d("s: ${Numeric.toHexString(s)}")
-
-        // EIP-155 v value calculation:
-        // v = chainId * 2 + 35 + recoveryId
-        //
-        // For Unichain (chainId = 130):
-        // v = 130 * 2 + 35 + recoveryId = 295 + recoveryId
-        // So v will be 295 (if recoveryId=0) or 296 (if recoveryId=1)
-        val vValue = chainId * 2 + 35 + recoveryId
-        val vBigInt = BigInteger.valueOf(vValue)
-
-        Timber.d("Calculated v (EIP-155): $vValue (chainId=$chainId, recoveryId=$recoveryId)")
-
-        // Convert signature components to BigInteger
-        val rBigInt = BigInteger(1, r)
-        val sBigInt = BigInteger(1, s)
-
-        // Create the signed transaction manually using RLP encoding
-        // Note: data field must be converted from hex string to bytes
-        val dataBytes = if (rawTransaction.data.isNullOrEmpty()) {
-            ByteArray(0)
-        } else {
-            Numeric.hexStringToByteArray(rawTransaction.data)
-        }
-
-        val signedValues = listOf(
-            RlpString.create(rawTransaction.nonce),
-            RlpString.create(rawTransaction.gasPrice),
-            RlpString.create(rawTransaction.gasLimit),
-            RlpString.create(Numeric.hexStringToByteArray(rawTransaction.to)),
-            RlpString.create(rawTransaction.value),
-            RlpString.create(dataBytes),
-            RlpString.create(vBigInt),
-            RlpString.create(rBigInt),
-            RlpString.create(sBigInt)
-        )
-
-        val rlpList = RlpList(signedValues)
-        val encoded = RlpEncoder.encode(rlpList)
-
-        Timber.d("Final signed transaction length: ${encoded.size}")
-        Timber.d("Final signed transaction: ${Numeric.toHexString(encoded)}")
-
-        return encoded
-    }
-
-    private fun findCorrectRecoveryId(
-        rawTransaction: RawTransaction,
-        signature: ByteArray,
-        expectedPublicKey: ByteArray
-    ): Int {
-        require(signature.size == 64) { "Signature must be 64 bytes for recovery" }
-
-        val r = signature.copyOfRange(0, 32)
-        val s = signature.copyOfRange(32, 64)
-
-        val txHash = web3Manager.getTransactionHashForTangemSigning(rawTransaction)
-
-        Timber.d("=== FINDING RECOVERY ID ===")
-        Timber.d("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
-
-        // Decompress the public key if needed
-        val expectedKeyUncompressed = when (expectedPublicKey.size) {
-            33 -> {
-                // Compressed key - decompress it
-                Timber.d("Decompressing public key...")
-                try {
-                    val decompressed = decompressPublicKey(expectedPublicKey)
-                    Timber.d("Decompressed key: ${Numeric.toHexString(decompressed)}")
-                    decompressed
-                } catch (e: Exception) {
-                    Timber.e("Failed to decompress key: ${e.message}")
-                    return 0
-                }
-            }
-            65 -> {
-                // Uncompressed with 0x04 prefix - remove prefix
-                expectedPublicKey.copyOfRange(1, 65)
-            }
-            64 -> {
-                // Already uncompressed without prefix
-                expectedPublicKey
-            }
-            else -> {
-                Timber.e("Unexpected public key size: ${expectedPublicKey.size}")
-                return 0
-            }
-        }
-
-        // Calculate and log expected address
-        val expectedAddress = try {
-            val hash = Hash.sha3(expectedKeyUncompressed)
-            val addressBytes = hash.copyOfRange(hash.size - 20, hash.size)
-            Numeric.toHexString(addressBytes)
-        } catch (e: Exception) {
-            Timber.e("Failed to calculate expected address: ${e.message}")
-            null
-        }
-        Timber.d("Expected address from public key: $expectedAddress")
-
-        // Try both recovery IDs
-        for (recoveryId in 0..1) {
-            try {
-                val v = (27 + recoveryId).toByte()
-                val signatureData = Sign.SignatureData(v, r, s)
-
-                Timber.d("Trying recovery ID $recoveryId (v=$v)...")
-
-                val recoveredKey = Sign.signedMessageHashToKey(txHash, signatureData)
-                val recoveredPublicKey = Numeric.toBytesPadded(recoveredKey, 64)
-
-                // Calculate recovered address
-                val recoveredAddress = try {
-                    val hash = Hash.sha3(recoveredPublicKey)
-                    val addressBytes = hash.copyOfRange(hash.size - 20, hash.size)
-                    Numeric.toHexString(addressBytes)
-                } catch (e: Exception) {
-                    null
-                }
-
-                Timber.d("Recovered public key: ${Numeric.toHexString(recoveredPublicKey)}")
-                Timber.d("Recovered address: $recoveredAddress")
-
-                if (recoveredPublicKey.contentEquals(expectedKeyUncompressed)) {
-                    Timber.d("✓ Found correct recovery ID: $recoveryId")
-                    Timber.d("✓ Address match confirmed: $recoveredAddress")
-                    return recoveryId
-                } else {
-                    Timber.d("✗ Recovery ID $recoveryId doesn't match")
-                    Timber.d("  Expected address: $expectedAddress")
-                    Timber.d("  Recovered address: $recoveredAddress")
-                }
-            } catch (e: Exception) {
-                Timber.w("Recovery ID $recoveryId failed: ${e.message}")
-                continue
-            }
-        }
-
-        // If we can't find the correct recovery ID, the transaction would fail anyway
-        // Better to fail early with a clear error than broadcast an invalid transaction
-        Timber.e("Could not determine correct recovery ID!")
-        Timber.e("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
-        Timber.e("This typically means the signature doesn't match the expected public key")
-        throw IllegalStateException(
-            "Could not determine correct recovery ID. " +
-            "The signature may not match the expected public key."
-        )
-    }
-
-    private fun decompressPublicKey(compressedKey: ByteArray): ByteArray {
-        require(compressedKey.size == 33) { "Compressed key must be 33 bytes" }
-
-        val prefix = compressedKey[0]
-        require(prefix == 0x02.toByte() || prefix == 0x03.toByte()) {
-            "Invalid compressed key prefix: $prefix"
-        }
-
-        try {
-            // Use Bouncy Castle to decompress
-            val spec = org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256k1")
-            val point = spec.curve.decodePoint(compressedKey)
-
-            // Get uncompressed encoding (without 0x04 prefix)
-            val uncompressed = point.getEncoded(false) // false = uncompressed format
-
-            Timber.d("Original compressed (${compressedKey.size} bytes): ${Numeric.toHexString(compressedKey)}")
-            Timber.d("Decompressed (${uncompressed.size} bytes): ${Numeric.toHexString(uncompressed)}")
-
-            // Remove the 0x04 prefix byte to get just the 64-byte key
-            return uncompressed.copyOfRange(1, uncompressed.size)
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to decompress public key")
-            throw e
-        }
-    }
-
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }
@@ -788,206 +590,4 @@ class MainViewModel : ViewModel() {
             loadBalances()
         }
     }
-}
-
-data class UiState(
-    val isLoading: Boolean = false,
-    val isLoadingBalances: Boolean = false,
-    val cardInfo: CardInfo? = null,
-    /** Currently selected blockchain network. */
-    val selectedChain: Chain = ChainRegistry.default,
-    /** Map of token symbol to balance. Use getBalance(token) helper. */
-    val tokenBalances: Map<String, BigDecimal> = emptyMap(),
-    val transferParams: TransferParams? = null,
-    /** Detailed result of the last successful transaction. */
-    val lastTransactionResult: TransactionResult? = null,
-    val error: String? = null
-) {
-    /** Get balance for a specific token. Returns ZERO if not loaded. */
-    fun getBalance(token: Token): BigDecimal = tokenBalances[token.symbol] ?: BigDecimal.ZERO
-
-    /** Shortcut for native currency balance (ETH on most chains). */
-    val ethBalance: BigDecimal get() = getBalance(TokenRegistry.Native)
-
-    /** Shortcut for USDC balance (for backward compatibility). */
-    val usdcBalance: BigDecimal get() = getBalance(TokenRegistry.USDC)
-
-    /** For backward compatibility - returns just the hash. */
-    val lastTransactionHash: String? get() = lastTransactionResult?.txHash
-
-    /** Native currency symbol for the selected chain (e.g., "ETH"). */
-    val nativeCurrencySymbol: String get() = selectedChain.nativeCurrencySymbol
-
-    /** Tokens available on the selected chain. */
-    val availableTokens: List<Token> get() = TokenContractRegistry.getTokensForChain(selectedChain)
-}
-
-data class TransferParams(
-    val recipientAddress: String,
-    val amount: BigDecimal,
-    /** The token being transferred. */
-    val token: Token,
-    val gasPrice: BigInteger,
-    val gasLimit: BigInteger,
-    val nonce: BigInteger
-) {
-    /** For backward compatibility. */
-    val isUsdc: Boolean get() = token.symbol == "USDC"
-}
-
-data class MaxTransferInfo(
-    val maxAmount: BigDecimal,
-    val gasCostEth: BigDecimal,
-    val hasEnoughGas: Boolean,
-    val gasPrice: BigInteger,
-    val gasLimit: BigInteger
-)
-
-/**
- * Categorized error types for user-friendly display.
- */
-enum class ErrorType {
-    CARD,           // NFC/Tangem card related errors
-    NETWORK,        // RPC/connection errors
-    VALIDATION,     // Input validation errors
-    TRANSACTION,    // Transaction execution errors
-    BALANCE,        // Insufficient balance errors
-    UNKNOWN         // Other errors
-}
-
-/**
- * Holds detailed error information for user-friendly display.
- */
-data class ErrorInfo(
-    val type: ErrorType,
-    val title: String,
-    val message: String,
-    val suggestion: String? = null,
-    val isRetryable: Boolean = false,
-    val technicalDetails: String? = null
-) {
-    companion object {
-        fun fromMessage(message: String): ErrorInfo {
-            return when {
-                // Card-related errors
-                message.contains("scan card", ignoreCase = true) ||
-                message.contains("tangem", ignoreCase = true) ||
-                message.contains("NFC", ignoreCase = true) ||
-                message.contains("card", ignoreCase = true) -> {
-                    ErrorInfo(
-                        type = ErrorType.CARD,
-                        title = "Card Error",
-                        message = message.removePrefix("Failed to scan card: "),
-                        suggestion = "Make sure NFC is enabled and hold your card steady against the phone",
-                        isRetryable = true
-                    )
-                }
-
-                // Network errors
-                message.contains("nonce", ignoreCase = true) ||
-                message.contains("gas price", ignoreCase = true) ||
-                message.contains("network", ignoreCase = true) ||
-                message.contains("connection", ignoreCase = true) ||
-                message.contains("timeout", ignoreCase = true) ||
-                message.contains("RPC", ignoreCase = true) -> {
-                    ErrorInfo(
-                        type = ErrorType.NETWORK,
-                        title = "Network Error",
-                        message = "Unable to connect to Unichain network",
-                        suggestion = "Check your internet connection and try again",
-                        isRetryable = true,
-                        technicalDetails = message
-                    )
-                }
-
-                // Balance errors
-                message.contains("insufficient", ignoreCase = true) ||
-                message.contains("balance", ignoreCase = true) -> {
-                    val isGasError = message.contains("gas", ignoreCase = true)
-                    ErrorInfo(
-                        type = ErrorType.BALANCE,
-                        title = if (isGasError) "Insufficient Gas" else "Insufficient Balance",
-                        message = message,
-                        suggestion = if (isGasError)
-                            "You need ETH to pay for transaction fees. Add more ETH to your wallet."
-                        else
-                            "Reduce the amount or add more funds to your wallet.",
-                        isRetryable = false
-                    )
-                }
-
-                // Validation errors
-                message.contains("address", ignoreCase = true) ||
-                message.contains("amount", ignoreCase = true) ||
-                message.contains("checksum", ignoreCase = true) ||
-                message.contains("invalid", ignoreCase = true) ||
-                message.contains("empty", ignoreCase = true) -> {
-                    ErrorInfo(
-                        type = ErrorType.VALIDATION,
-                        title = "Invalid Input",
-                        message = message,
-                        suggestion = "Please check your input and try again",
-                        isRetryable = false
-                    )
-                }
-
-                // Transaction errors
-                message.contains("transaction", ignoreCase = true) ||
-                message.contains("transfer", ignoreCase = true) ||
-                message.contains("send", ignoreCase = true) ||
-                message.contains("sign", ignoreCase = true) ||
-                message.contains("broadcast", ignoreCase = true) -> {
-                    ErrorInfo(
-                        type = ErrorType.TRANSACTION,
-                        title = "Transaction Failed",
-                        message = message.removePrefix("Failed to send transaction: ")
-                            .removePrefix("Failed to execute transfer: "),
-                        suggestion = "Please try again. If the problem persists, check the network status.",
-                        isRetryable = true,
-                        technicalDetails = message
-                    )
-                }
-
-                // Default
-                else -> ErrorInfo(
-                    type = ErrorType.UNKNOWN,
-                    title = "Error",
-                    message = message,
-                    suggestion = null,
-                    isRetryable = true
-                )
-            }
-        }
-    }
-}
-
-/**
- * Holds detailed information about a successful transaction.
- * Displayed to user after transfer completes.
- */
-data class TransactionResult(
-    val txHash: String,
-    val amount: BigDecimal,
-    val tokenSymbol: String,
-    val recipientAddress: String,
-    val fromAddress: String,
-    val gasFee: BigDecimal,
-    val gasPrice: BigInteger,
-    val gasLimit: BigInteger,
-    val nonce: BigInteger,
-    val networkName: String,
-    val explorerUrl: String,
-    val timestamp: Long = System.currentTimeMillis()
-) {
-    /** Shortened transaction hash for display (first 10 + last 8 chars) */
-    val shortTxHash: String
-        get() = if (txHash.length > 20) {
-            "${txHash.take(10)}...${txHash.takeLast(8)}"
-        } else txHash
-
-    /** Shortened recipient address for display */
-    val shortRecipientAddress: String
-        get() = if (recipientAddress.length > 16) {
-            "${recipientAddress.take(8)}...${recipientAddress.takeLast(6)}"
-        } else recipientAddress
 }

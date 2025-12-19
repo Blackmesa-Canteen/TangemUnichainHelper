@@ -131,13 +131,14 @@ fun MainScreen(viewModel: MainViewModel) {
                 if (transferParams == null) {
                     TransferSection(
                         isLoading = uiState.isLoading,
-                        ethBalance = uiState.ethBalance.toPlainString(),
-                        usdcBalance = uiState.usdcBalance.toPlainString(),
-                        onPrepareTransfer = { address, amount, isUsdc ->
-                            viewModel.prepareTransfer(address, amount, isUsdc)
+                        availableTokens = uiState.availableTokens,
+                        tokenBalances = uiState.tokenBalances,
+                        nativeCurrencySymbol = uiState.selectedChain.nativeCurrencySymbol,
+                        onPrepareTransfer = { address, amount, token ->
+                            viewModel.prepareTransfer(address, amount, token)
                         },
-                        onCalculateMax = { isUsdc ->
-                            viewModel.calculateMaxTransferAmount(isUsdc)
+                        onCalculateMax = { token ->
+                            viewModel.calculateMaxTransferAmount(token)
                         }
                     )
                 } else {
@@ -743,17 +744,21 @@ fun BalancesSectionDynamic(
 @Composable
 fun TransferSection(
     isLoading: Boolean,
-    ethBalance: String,
-    usdcBalance: String,
-    onPrepareTransfer: (String, String, Boolean) -> Unit,
-    onCalculateMax: suspend (Boolean) -> Result<MaxTransferInfo>
+    availableTokens: List<Token>,
+    tokenBalances: Map<String, java.math.BigDecimal>,
+    nativeCurrencySymbol: String,
+    onPrepareTransfer: (String, String, Token) -> Unit,
+    onCalculateMax: suspend (Token) -> Result<MaxTransferInfo>
 ) {
     var recipientAddress by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
-    var selectedToken by remember { mutableStateOf(0) } // 0 = ETH, 1 = USDC
+    var selectedTokenIndex by remember { mutableStateOf(0) }
     var isCalculatingMax by remember { mutableStateOf(false) }
     var maxInfo by remember { mutableStateOf<MaxTransferInfo?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Get the currently selected token
+    val selectedToken = availableTokens.getOrNull(selectedTokenIndex) ?: Token.Native
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -766,34 +771,30 @@ fun TransferSection(
                 fontWeight = FontWeight.Bold
             )
 
-            // Token Selection
+            // Token Selection - Dynamic based on available tokens
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilterChip(
-                    selected = selectedToken == 0,
-                    onClick = {
-                        selectedToken = 0
-                        maxInfo = null // Reset max info when switching tokens
-                    },
-                    label = { Text("ETH") },
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = selectedToken == 1,
-                    onClick = {
-                        selectedToken = 1
-                        maxInfo = null // Reset max info when switching tokens
-                    },
-                    label = { Text("USDC") },
-                    modifier = Modifier.weight(1f)
-                )
+                availableTokens.forEachIndexed { index, token ->
+                    val displaySymbol = if (token is Token.Native) nativeCurrencySymbol else token.symbol
+                    FilterChip(
+                        selected = selectedTokenIndex == index,
+                        onClick = {
+                            selectedTokenIndex = index
+                            maxInfo = null // Reset max info when switching tokens
+                        },
+                        label = { Text(displaySymbol) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
             // Show current balance for selected token
+            val displaySymbol = if (selectedToken is Token.Native) nativeCurrencySymbol else selectedToken.symbol
+            val balance = tokenBalances[selectedToken.symbol] ?: java.math.BigDecimal.ZERO
             Text(
-                text = "Available: ${if (selectedToken == 0) ethBalance else usdcBalance} ${if (selectedToken == 0) "ETH" else "USDC"}",
+                text = "Available: ${balance.stripTrailingZeros().toPlainString()} $displaySymbol",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -822,16 +823,13 @@ fun TransferSection(
                         onClick = {
                             coroutineScope.launch {
                                 isCalculatingMax = true
-                                val result = onCalculateMax(selectedToken == 1)
+                                val result = onCalculateMax(selectedToken)
                                 result.onSuccess { info ->
                                     maxInfo = info
                                     if (info.hasEnoughGas) {
-                                        // Set amount to max (with reasonable precision)
-                                        amount = if (selectedToken == 1) {
-                                            info.maxAmount.setScale(6, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString()
-                                        } else {
-                                            info.maxAmount.setScale(8, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString()
-                                        }
+                                        // Set amount to max (with reasonable precision based on token decimals)
+                                        val scale = if (selectedToken.decimals <= 6) selectedToken.decimals else 8
+                                        amount = info.maxAmount.setScale(scale, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString()
                                     }
                                 }
                                 isCalculatingMax = false
@@ -878,7 +876,7 @@ fun TransferSection(
 
             Button(
                 onClick = {
-                    onPrepareTransfer(recipientAddress, amount, selectedToken == 1)
+                    onPrepareTransfer(recipientAddress, amount, selectedToken)
                 },
                 enabled = !isLoading && recipientAddress.isNotBlank() && amount.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()

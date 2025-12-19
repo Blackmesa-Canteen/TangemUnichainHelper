@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet
 
+## [1.1.2] - 2025-12-19
+
+### Fixed
+- Send Transaction token selector now shows all available tokens for the selected chain
+  - Previously hardcoded to ETH and USDC only
+  - Now dynamically displays tokens from `TokenContractRegistry` for the current chain
+
 ## [1.1.1] - 2025-12-19
 
 ### Added

@@ -891,6 +891,7 @@ data class ErrorInfo(
 
                 // Transaction errors
                 message.contains("transaction", ignoreCase = true) ||
+                message.contains("transfer", ignoreCase = true) ||
                 message.contains("send", ignoreCase = true) ||
                 message.contains("sign", ignoreCase = true) ||
                 message.contains("broadcast", ignoreCase = true) -> {

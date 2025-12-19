@@ -27,6 +27,28 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            // For CI: use environment variables
+            // For local: use local.properties or keystore.properties
+            val keystorePath = System.getenv("KEYSTORE_PATH")
+                ?: project.findProperty("KEYSTORE_PATH")?.toString()
+            val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+                ?: project.findProperty("KEYSTORE_PASSWORD")?.toString()
+            val keyAlias = System.getenv("KEY_ALIAS")
+                ?: project.findProperty("KEY_ALIAS")?.toString()
+            val keyPassword = System.getenv("KEY_PASSWORD")
+                ?: project.findProperty("KEY_PASSWORD")?.toString()
+
+            if (keystorePath != null && keystorePassword != null && keyAlias != null && keyPassword != null) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -34,6 +56,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use release signing config if available
+            signingConfig = signingConfigs.findByName("release")?.takeIf { it.storeFile != null }
+                ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {

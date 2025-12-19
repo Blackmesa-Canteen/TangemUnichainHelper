@@ -44,13 +44,28 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test --stacktrace
 
-      - name: Build release APK
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/release.keystore
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Rename APK with version
         run: |
-          mv app/build/outputs/apk/release/app-release-unsigned.apk \
-             app/build/outputs/apk/release/tangem-unichain-helper-v${{ steps.version.outputs.version }}.apk
+          # Find the signed APK (app-release.apk) or unsigned if signing not configured
+          if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+            mv app/build/outputs/apk/release/app-release.apk \
+               app/build/outputs/apk/release/tangem-unichain-helper-v${{ steps.version.outputs.version }}.apk
+          else
+            mv app/build/outputs/apk/release/app-release-unsigned.apk \
+               app/build/outputs/apk/release/tangem-unichain-helper-v${{ steps.version.outputs.version }}.apk
+          fi
 
       - name: Extract release notes from CHANGELOG
         id: changelog

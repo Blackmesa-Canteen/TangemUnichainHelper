@@ -2,6 +2,7 @@ package com.example.tangemunichainhelper.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.tangemunichainhelper.core.AddressUtils
 import com.example.tangemunichainhelper.core.CardInfo
 import com.example.tangemunichainhelper.core.NetworkConstants
 import com.example.tangemunichainhelper.core.TangemManager
@@ -195,12 +196,24 @@ class MainViewModel : ViewModel() {
                 // Use the address from scanned card
                 val fromAddress = cardInfo.walletAddress
 
-                // Validate inputs
-                if (recipientAddress.isBlank() || !recipientAddress.matches(Regex("^0x[a-fA-F0-9]{40}$"))) {
+                // Validate recipient address with EIP-55 checksum support
+                val addressValidation = AddressUtils.validateAddress(recipientAddress)
+                if (!addressValidation.isValid) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Invalid recipient address"
+                            error = addressValidation.error ?: "Invalid recipient address"
+                        )
+                    }
+                    return@launch
+                }
+
+                // Prevent sending to self
+                if (recipientAddress.equals(fromAddress, ignoreCase = true)) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Cannot send to your own address"
                         )
                     }
                     return@launch
@@ -230,22 +243,22 @@ class MainViewModel : ViewModel() {
 
                 // Get nonce and gas price
                 val nonceResult = web3Manager.getNonce(fromAddress)
-                val nonce = nonceResult.getOrElse {
+                val nonce = nonceResult.getOrElse { exception ->
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Failed to get nonce: ${it.error}"
+                            error = "Failed to get nonce: ${exception.message}"
                         )
                     }
                     return@launch
                 }
 
                 val gasPriceResult = web3Manager.getGasPrice()
-                val gasPrice = gasPriceResult.getOrElse {
+                val gasPrice = gasPriceResult.getOrElse { exception ->
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "Failed to get gas price: ${it.error}"
+                            error = "Failed to get gas price: ${exception.message}"
                         )
                     }
                     return@launch
@@ -293,7 +306,6 @@ class MainViewModel : ViewModel() {
                     }
                 } else {
                     // For ETH: need amount + gas
-                    val amountInWei = amountDecimal.multiply(BigDecimal.TEN.pow(18)).toBigInteger()
                     val totalNeeded = amountDecimal + gasCostEth
                     if (ethBalance < totalNeeded) {
                         val maxSendable = (ethBalance - gasCostEth).coerceAtLeast(BigDecimal.ZERO)
@@ -508,12 +520,23 @@ class MainViewModel : ViewModel() {
         Timber.d("r: ${Numeric.toHexString(r)}")
         Timber.d("s: ${Numeric.toHexString(s)}")
 
-        // Calculate v for EIP-155: v = CHAIN_ID * 2 + 35 + recoveryId
-        // DON'T cast to byte - use BigInteger for proper encoding
-        val vValue = NetworkConstants.CHAIN_ID * 2 + 35 + recoveryId
-        val vBigInt = BigInteger.valueOf(vValue)
+        // IMPORTANT: Since we sign with LEGACY hash format (no chain ID in hash),
+        // we MUST use legacy v value (27 or 28), NOT EIP-155 v value.
+        //
+        // EIP-155 rule: If you sign hash(rlp(nonce,gasPrice,gasLimit,to,value,data,chainId,0,0))
+        //               then use v = chainId * 2 + 35 + recoveryId
+        //               If you sign hash(rlp(nonce,gasPrice,gasLimit,to,value,data)) [legacy]
+        //               then use v = 27 + recoveryId
+        //
+        // This is the "hack" that makes Tangem work with Unichain:
+        // - Tangem signs legacy hash (chain-agnostic)
+        // - We broadcast with legacy v value
+        // - Transaction is valid on any EVM chain (including Unichain)
+        // - Trade-off: No replay protection, but acceptable for fund recovery
+        val vValue = 27 + recoveryId
+        val vBigInt = BigInteger.valueOf(vValue.toLong())
 
-        Timber.d("Calculated v (EIP-155): $vValue (0x${vValue.toString(16)})")
+        Timber.d("Calculated v (legacy): $vValue (0x${vValue.toString(16)})")
 
         // Convert signature components to BigInteger
         val rBigInt = BigInteger(1, r)
@@ -640,9 +663,15 @@ class MainViewModel : ViewModel() {
             }
         }
 
-        Timber.w("Could not determine correct recovery ID, defaulting to 0")
-        Timber.w("⚠️ WARNING: Using default recovery ID may result in wrong address!")
-        return 0
+        // If we can't find the correct recovery ID, the transaction would fail anyway
+        // Better to fail early with a clear error than broadcast an invalid transaction
+        Timber.e("Could not determine correct recovery ID!")
+        Timber.e("Expected public key: ${Numeric.toHexString(expectedPublicKey)}")
+        Timber.e("This typically means the signature doesn't match the expected public key")
+        throw IllegalStateException(
+            "Could not determine correct recovery ID. " +
+            "The signature may not match the expected public key."
+        )
     }
 
     private fun decompressPublicKey(compressedKey: ByteArray): ByteArray {

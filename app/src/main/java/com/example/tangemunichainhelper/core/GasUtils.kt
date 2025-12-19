@@ -1,5 +1,7 @@
 package com.example.tangemunichainhelper.core
 
+import org.web3j.crypto.Hash
+import org.web3j.utils.Numeric
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode

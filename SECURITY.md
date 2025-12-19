@@ -54,7 +54,7 @@ We take security seriously. If you discover a security vulnerability, please rep
 
 1. **DO NOT** open a public GitHub issue for security vulnerabilities
 2. **Email** the maintainer directly (check the repository for contact info)
-3. **Or** use [GitHub's private vulnerability reporting](https://github.com/anthropics/claude-code/security/advisories/new) if enabled
+3. **Or** use [GitHub's private vulnerability reporting](https://github.com/Blackmesa-Canteen/TangemUnichainHelper/security/advisories/new) if enabled
 
 ### What to Include
 

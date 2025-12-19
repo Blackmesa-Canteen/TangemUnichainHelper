@@ -132,7 +132,7 @@ class MainViewModel : ViewModel() {
      */
     suspend fun calculateMaxTransferAmount(token: Token): Result<MaxTransferInfo> {
         val state = _uiState.value
-        val cardInfo = state.cardInfo ?: return Result.failure(Exception("Card not scanned"))
+        if (state.cardInfo == null) return Result.failure(Exception("Card not scanned"))
 
         return try {
             // Get current gas price

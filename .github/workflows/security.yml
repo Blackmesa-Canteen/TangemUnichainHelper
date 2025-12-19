@@ -93,7 +93,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Check for dependency updates and vulnerabilities
-        run: ./gradlew dependencies --configuration releaseRuntimeClasspath > dependencies.txt
+        run: ./gradlew :app:dependencies --configuration releaseRuntimeClasspath > dependencies.txt
         env:
           GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
 

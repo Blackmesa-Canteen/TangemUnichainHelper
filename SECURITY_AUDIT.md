@@ -10,7 +10,9 @@
 
 ## Executive Summary
 
-A comprehensive security audit was performed on the Tangem Unichain Helper Android application. The audit covered hardcoded secrets, input validation, network security, cryptographic operations, and logging practices. One security issue was identified and fixed during the audit.
+A comprehensive security audit was performed on the Tangem Unichain Helper Android application (v1.1.0 with multi-chain support). The audit covered hardcoded secrets, input validation, network security, cryptographic operations, and logging practices. One security issue was identified and fixed during the audit.
+
+> **Note**: This audit covers the multi-chain architecture including Unichain (mainnet) and Sepolia (testnet). The same security properties apply to any EVM chain added by developers.
 
 | Category | Status | Notes |
 |----------|--------|-------|
